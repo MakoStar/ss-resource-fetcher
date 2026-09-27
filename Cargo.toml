@@ -1,0 +1,43 @@
+[package]
+name = "ss-resource-fetcher"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ResourceFetcher"
+path = "src/main.rs"
+
+[dependencies]
+# Crates
+logger = { path = "crates/logger" }
+file-utils = { path = "crates/file-utils" }
+network-manager = { path = "crates/network-manager" }
+# Project
+aes = "0.9.2"
+log = "0.4.34"
+hex = "0.4.3"
+toml = "1.1.4"
+regex = "1.13.1"
+flate2 = "1.1.9"
+prost = "0.14.4"
+anyhow = "1.0.104" 
+qbsdiff = "1.4.4"
+prost-types = "0.14.4"
+thiserror = "2.0.20"
+toml_edit = "0.25.13"
+serde_json = "1.0.151"
+unicode-width = "0.2.2"
+cbc = { version = "0.2.1", features = ["alloc"] }
+clap = { version = "4.0", features = ["derive"] }
+phf = { version = "0.14.0", features = ["macros"] }
+tokio = { version = "1.0.229", features = ["full"]}
+serde = {  version = "1.0.229", features = ["derive"]}
+indexmap = { version = "2.14.0", features = ["serde"] }
+
+[build-dependencies]
+anyhow = "1.0.104" 
+prost-build = "0.14.4"
+protox = "0.9.1"
+
+[dev-dependencies]
+tempfile = "3.8"

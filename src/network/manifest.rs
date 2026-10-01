@@ -42,23 +42,17 @@ impl ManifestFetcher {
             .ok_or_else(|| AppError::UnknownRegion(region.to_string()))?;
 
         let url = format!("{server_url}{}", self.manifest_route);
-        let bytes = self.fetch_url(&url).await?;
+        let bytes = self
+            .requester
+            .get_bytes(&url)
+            .await
+            .inspect_err(|err| log::error!("url={url} fetch error={err}"))?;
 
         logger::succ!(
             "{region} - {} - {:.2}KB",
             self.manifest_route,
             bytes.len() as f64 / 1024.0
         );
-
-        Ok(bytes)
-    }
-
-    pub async fn fetch_url(&self, url: &str) -> Result<Vec<u8>> {
-        let bytes = self
-            .requester
-            .get_bytes(url)
-            .await
-            .inspect_err(|err| log::error!("url={url} fetch error={err}"))?;
 
         Ok(bytes)
     }

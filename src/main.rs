@@ -15,6 +15,7 @@ use clap::Parser;
 use crate::cli::{Args, print_banner};
 use crate::config::AppConfig;
 use crate::error::Result;
+use crate::model::UncensorSource;
 use crate::pipeline::{PipelineOptions, ResourcePipeline};
 
 #[tokio::main]
@@ -27,6 +28,7 @@ async fn main() -> Result<()> {
     let options = PipelineOptions {
         generate_manifest_record: args.generate_manifest_record,
         download_uncensor_pack: args.download_uncensor_pack,
+        uncensor_source: UncensorSource::resolve(args.uncensor_region, args.uncensor_default_url),
     };
 
     ResourcePipeline::new(AppConfig::get()).run(&options).await

@@ -100,8 +100,7 @@ impl AppConfig {
     }
 
     fn to_toml_with_comments(&self) -> String {
-        let content: String = toml::to_string_pretty(self)
-            .expect("failed to serialize AppConfig");
+        let content: String = toml::to_string_pretty(self).expect("failed to serialize AppConfig");
 
         // comments::apply(&content)
         content
@@ -116,15 +115,16 @@ impl AppConfig {
             );
         }
 
-        let dirs: [(&str, &str); 6] = [
+        let dirs: [(&str, &str); 7] = [
             ("ROOT_OUTPUT_DIR", &self.file_path.root_output_dir),
             ("MANIFEST_OUTPUT_DIR", &self.file_path.manifest_output_dir),
             ("VERSIONS_OUTPUT_DIR", &self.file_path.versions_output_dir),
             ("PATCH_OUTPUT_DIR", &self.file_path.patch_output_dir),
             ("UNPACK_OUTPUT_DIR", &self.file_path.unpack_output_dir),
+            ("UNCENSOR_OUTPUT_DIR", &self.file_path.uncensor_output_dir),
             (
-                "UNCENSOR_OUTPUT_DIR",
-                &self.file_path.uncensor_output_dir,
+                "UNCENSOR_DEFAULT_OUTPUT_DIR",
+                &self.file_path.uncensor_default_output_dir,
             ),
         ];
 
@@ -136,8 +136,14 @@ impl AppConfig {
 
         let names: [(&str, &str); 5] = [
             ("MANIFEST_RAW_FILE", &self.file_name.manifest_raw_file),
-            ("MANIFEST_DECRYPT_FILE", &self.file_name.manifest_decrypt_file),
-            ("MANIFEST_DECODED_FILE", &self.file_name.manifest_decoded_file),
+            (
+                "MANIFEST_DECRYPT_FILE",
+                &self.file_name.manifest_decrypt_file,
+            ),
+            (
+                "MANIFEST_DECODED_FILE",
+                &self.file_name.manifest_decoded_file,
+            ),
             ("PATCH_MANIFEST_FILE", &self.file_name.patch_manifest_file),
             ("VERSION_FILE", &self.file_name.version_file),
         ];
@@ -221,7 +227,6 @@ pub fn load_or_init_config<P: AsRef<Path>>(path: P) -> Result<AppConfig> {
 
 pub static APP_CONFIG: LazyLock<AppConfig> =
     LazyLock::new(|| load_or_init_config(CONFIG_FILE_NAME).expect("failed to load config"));
-
 
 #[cfg(test)]
 mod tests {

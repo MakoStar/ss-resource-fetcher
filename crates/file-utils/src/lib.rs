@@ -30,7 +30,7 @@ impl FileHandler {
 
     pub fn write_json_compact<T: Serialize>(data: &T, path: impl AsRef<Path>) -> io::Result<()> {
         let target: PathBuf = Self::resolve_path(path)?;
-        let json_str: String = serde_json::to_string(data).map_err(|e| io::Error::other(e))?;
+        let json_str: String = serde_json::to_string(data).map_err(io::Error::other)?;
         fs::write(&target, json_str.as_bytes())
     }
 
@@ -224,7 +224,7 @@ impl FileHandler {
         let mut buf: Vec<u8> = Vec::with_capacity(256);
         let mut ser: serde_json::Serializer<&mut Vec<u8>, serde_json::ser::PrettyFormatter<'_>> =
             serde_json::Serializer::with_formatter(&mut buf, formatter);
-        data.serialize(&mut ser).map_err(|e| io::Error::other(e))?;
+        data.serialize(&mut ser).map_err(io::Error::other)?;
         String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 

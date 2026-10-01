@@ -23,7 +23,7 @@ pub struct ManiReader {
 
 impl ManiReader {
     pub fn new<P: AsRef<Path>>(main_file_path: P) -> Result<Self> {
-        let path: PathBuf= main_file_path.as_ref().to_path_buf();
+        let path: PathBuf = main_file_path.as_ref().to_path_buf();
         let content: String = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read mani file: {}", path.display()))?;
 
@@ -77,11 +77,11 @@ impl ManiReader {
         })
     }
 
-    pub fn resource_names(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self.resource_data.keys().map(String::as_str).collect();
-        names.sort_unstable();
+    pub fn resources(&self) -> Vec<&ManiResource> {
+        let mut items: Vec<&ManiResource> = self.resource_data.values().collect();
+        items.sort_by(|a, b| a.file.cmp(&b.file));
 
-        names
+        items
     }
 
     pub fn get_resource_hash_by_patch(&self, patch_name: &str) -> Option<&str> {

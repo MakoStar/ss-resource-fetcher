@@ -87,6 +87,16 @@ impl UncensorConfig {
             self.manifest_route.trim_start_matches('/'),
         )
     }
+
+    pub fn resource_base_url(&self) -> String {
+        let base = self.url.trim_end_matches('/');
+        let route = self.manifest_route.trim_start_matches('/');
+
+        match route.rsplit_once('/') {
+            Some((dir, _)) if !dir.is_empty() => format!("{base}/{dir}"),
+            _ => base.to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,9 +117,12 @@ pub struct FilePathConfig {
     /// 解包文件输出目录
     #[serde(rename = "UNPACK_OUTPUT_DIR")]
     pub unpack_output_dir: String,
-    /// Uncensor资源输出目录
+    /// 反和谐资源输出目录
     #[serde(rename = "UNCENSOR_OUTPUT_DIR")]
     pub uncensor_output_dir: String,
+    /// 反和谐默认地址资源输出目录
+    #[serde(rename = "UNCENSOR_DEFAULT_OUTPUT_DIR")]
+    pub uncensor_default_output_dir: String,
 }
 
 impl Default for FilePathConfig {
@@ -121,6 +134,7 @@ impl Default for FilePathConfig {
             patch_output_dir: "./output/Metadata".into(),
             unpack_output_dir: "./output/Unpack".into(),
             uncensor_output_dir: "./output/Uncensor".into(),
+            uncensor_default_output_dir: "./output/UncensorDefault".into(),
         }
     }
 }
@@ -338,5 +352,47 @@ impl Default for ExtractorConfig {
             game_version_key: "GAME_VER".into(),
             patch_version_key: "BIN_DIFF_PATCH_VER".into(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UncensorConfig;
+
+    #[test]
+    fn builds_default_uncensor_urls() {
+        let config = UncensorConfig::default();
+
+        assert_eq!(
+            config.manifest_url(),
+            "http://na.jvav.net.cn/res/win/ss_win.mani"
+        );
+        assert_eq!(config.resource_base_url(), "http://na.jvav.net.cn/res/win");
+    }
+
+    #[test]
+    fn resource_base_url_points_at_manifest_dir() {
+        let config = UncensorConfig {
+            url: "https://example.com/".into(),
+            manifest_route: "/a/b/c/other.mani".into(),
+            source_region: "TW".into(),
+        };
+
+        assert_eq!(
+            config.manifest_url(),
+            "https://example.com/a/b/c/other.mani"
+        );
+        assert_eq!(config.resource_base_url(), "https://example.com/a/b/c");
+    }
+
+    #[test]
+    fn resource_base_url_falls_back_to_root() {
+        let config = UncensorConfig {
+            url: "https://example.com".into(),
+            manifest_route: "ss_win.mani".into(),
+            source_region: "TW".into(),
+        };
+
+        assert_eq!(config.resource_base_url(), "https://example.com");
     }
 }

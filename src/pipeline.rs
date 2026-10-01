@@ -7,18 +7,21 @@ use crate::config::AppConfig;
 use crate::error::Result;
 use crate::extractor::{GameVersionExtractor, PatchManifestExtractor, PatchVersionExtractor};
 use crate::manifest::{ManifestDecoder, ManifestDecryptor};
-use crate::model::{RegionBytes, RegionFileDiffs, RegionResources};
+use crate::model::{RegionBytes, RegionFileDiffs, RegionResources, UncensorSource};
 use crate::network::{ManifestFetcher, ResourcesFetcher, UncensorPatchFetcher};
 use crate::patch::PatchMerger;
 use crate::storage::RegionFileStore;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PipelineOptions {
     /// 是否生成主清单记录
     pub generate_manifest_record: bool,
 
-    /// 是否只下载反和谐资源包
+    /// 是否只下载 Uncensor 资源包（独占任务）
     pub download_uncensor_pack: bool,
+
+    /// Uncensor 资源包的下载来源
+    pub uncensor_source: UncensorSource,
 }
 
 pub struct ResourcePipeline {
@@ -56,7 +59,13 @@ impl ResourcePipeline {
                     "--download-uncensor-pack is exclusive: ignoring --generate-manifest-record."
                 );
             }
-            return self.download_uncensor_pack().await;
+            return self.download_uncensor_pack(options).await;
+        }
+
+        if options.uncensor_source != UncensorSource::ConfigRegion {
+            logger::tips!(
+                "--uncensor-region / --uncensor-default-url only work together with --download-uncensor-pack."
+            );
         }
 
         let flags = &self.config.feature_flags;
@@ -86,8 +95,8 @@ impl ResourcePipeline {
         Ok(())
     }
 
-    async fn download_uncensor_pack(&self) -> Result<()> {
-        UncensorPatchFetcher::from_app_config(self.config)?
+    async fn download_uncensor_pack(&self, options: &PipelineOptions) -> Result<()> {
+        UncensorPatchFetcher::from_app_config(self.config, &options.uncensor_source)?
             .fetch_all()
             .await
     }

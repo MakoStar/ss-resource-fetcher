@@ -2,6 +2,7 @@
 name = "network-manager"
 version = "0.1.0"
 edition = "2024"
+description = "HTTP client wrapper with retries, backoff and connection pooling."
 
 [lib]
 crate-type = ["lib"]

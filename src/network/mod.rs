@@ -1,7 +1,7 @@
-mod fetcher;
+mod manifest;
+mod resources;
+mod uncensor;
 
-pub use fetcher::ManifestFetcher;
-pub use fetcher::ManifestError;
-pub use fetcher::TManifestResult;
-pub use fetcher::ResourcesFetcher;
-pub use fetcher::TResourceResult;
+pub use manifest::ManifestFetcher;
+pub use resources::ResourcesFetcher;
+pub use uncensor::UncensorPatchFetcher;

@@ -38,21 +38,21 @@ fn format_record(buf: &mut Formatter, record: &Record<'_>) -> Result<()> {
     let style: Style = level_style(record.level());
     let tag: &str = level_tag(record.level());
 
-    eprintln!(
+    let line: String = format!(
         "[{}][{}] - {}",
         ts.to_string().style(TS_STYLE),
         tag.style(style),
         record.args().to_string().style(style),
     );
 
+    eprintln!("{line}");
+
+    let _ = buf;
+
     Ok(())
 }
 
 pub fn init(default_level: LevelFilter) {
-    // Builder::from_default_env()
-    //     .filter_level(default_level)
-    //     .format(format_record)
-    //     .init();
     let mut builder: Builder = Builder::new();
 
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
@@ -61,7 +61,7 @@ pub fn init(default_level: LevelFilter) {
         builder.filter_level(default_level);
     }
 
-    builder.format(format_record).init();
+    let _ = builder.format(format_record).try_init();
 }
 
 #[derive(Clone, Copy)]
@@ -122,12 +122,14 @@ pub fn custom_log(tag: &CustomTag, msg: Arguments) {
         style = style.bold();
     }
 
-    eprintln!(
+    let line: String = format!(
         "[{}][{}] - {}",
         ts.to_string().style(TS_STYLE),
         tag.name.style(style),
-        msg.style(style),
+        msg.to_string().style(style),
     );
+
+    eprintln!("{line}");
 }
 
 pub fn set_env_color() {
@@ -148,16 +150,6 @@ macro_rules! init_logger {
         $crate::init($level)
     };
 }
-
-// #[macro_export]
-// macro_rules! log_tag {
-//     ($tag:expr, $($arg:tt)*) => {
-//         $crate::custom_log(
-//             &$tag,
-//             format_args!($($arg)*)
-//         )
-//     };
-// }
 
 #[macro_export]
 macro_rules! head {

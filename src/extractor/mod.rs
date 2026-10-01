@@ -1,9 +1,7 @@
-pub mod manifest_extractor;
-pub mod version_extractor;
+mod game_version;
+mod patch_manifest;
+mod patch_version;
 
-pub use manifest_extractor::HotfixPatchManifestExtractor;
-pub use version_extractor::PatchVersionExtractor;
-pub use version_extractor::GameVersionExtractor;
-
-pub use manifest_extractor::TResEntryIndexMap;
-pub use manifest_extractor::TManifestEntryIndexMap;
+pub use game_version::GameVersionExtractor;
+pub use patch_manifest::PatchManifestExtractor;
+pub use patch_version::PatchVersionExtractor;

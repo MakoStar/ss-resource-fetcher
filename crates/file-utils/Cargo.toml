@@ -2,6 +2,7 @@
 name = "file-utils"
 version = "0.1.0"
 edition = "2024"
+description = "File system helpers: read/write, hashing and JSON persistence."
 
 [lib]
 crate-type = ["lib"]

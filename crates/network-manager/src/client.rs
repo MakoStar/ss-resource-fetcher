@@ -16,6 +16,7 @@ use crate::method::HttpMethod;
 use crate::request::RequestSpec;
 use crate::response::FetchResponse;
 
+#[derive(Clone)]
 pub struct HttpFetcher {
     raw_client: Client,
     middleware_client: ClientWithMiddleware,

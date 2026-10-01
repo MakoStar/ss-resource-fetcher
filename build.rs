@@ -15,12 +15,12 @@ macro_rules! rerun_if_changed {
 
 const PROTO_DIR: &str = "proto/";
 const PROTO_FILE_DIFF: &str = "proto/file_diff.proto";
-const OUT_DIR_RUST: &str = "src/proto";
+const OUT_DIR_RUST: &str = "src/generated";
 const DESCRIPTOR_SET_FILENAME: &str = "file_descriptor_set.bin";
 const PROTO_MODULE_CODE: &str = "pub mod file_diff;\npub use file_diff::*;\n";
 
 fn compile_proto_descriptors() -> Result<FileDescriptorSet> {
-    protox::compile(&[PROTO_FILE_DIFF], &[PROTO_DIR]).context("failed to compile proto descriptors")
+    protox::compile([PROTO_FILE_DIFF], [PROTO_DIR]).context("failed to compile proto descriptors")
 }
 
 fn write_descriptor_set(fds: &FileDescriptorSet) -> Result<PathBuf> {

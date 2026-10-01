@@ -2,6 +2,7 @@
 name = "logger"
 version = "0.1.0"
 edition = "2024"
+description = "Colored terminal logger built on top of env_logger."
 
 [lib]
 crate-type = ["lib"]

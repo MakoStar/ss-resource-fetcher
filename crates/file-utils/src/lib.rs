@@ -2,10 +2,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::anyhow;
+use anyhow::{Context, Result, anyhow};
 use log::{error, warn};
-use md5::Digest;
-use md5::Md5;
+use md5::{Digest, Md5};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use sha2::Sha256;
@@ -31,8 +30,7 @@ impl FileHandler {
 
     pub fn write_json_compact<T: Serialize>(data: &T, path: impl AsRef<Path>) -> io::Result<()> {
         let target: PathBuf = Self::resolve_path(path)?;
-        let json_str: String =
-            serde_json::to_string(data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let json_str: String = serde_json::to_string(data).map_err(|e| io::Error::other(e))?;
         fs::write(&target, json_str.as_bytes())
     }
 
@@ -76,26 +74,13 @@ impl FileHandler {
         }
     }
 
-    pub fn read_json<T: DeserializeOwned>(path: impl AsRef<Path>) -> Option<T> {
+    pub fn read_json<T: DeserializeOwned>(path: impl AsRef<Path>) -> Result<T> {
         let p: &Path = path.as_ref();
-        let content: String = match fs::read_to_string(p) {
-            Ok(c) => c,
-            Err(e) => {
-                Self::log_read_error("read_json", p, &e);
-                return None;
-            }
-        };
-        match serde_json::from_str::<T>(&content) {
-            Ok(data) => Some(data),
-            Err(e) => {
-                warn!(
-                    "[read_json] JSON decode error: {} | path: {}",
-                    e,
-                    p.display()
-                );
-                None
-            }
-        }
+        let content: String = fs::read_to_string(p)
+            .with_context(|| format!("[read_json] cannot read file: {}", p.display()))?;
+
+        serde_json::from_str::<T>(&content)
+            .with_context(|| format!("[read_json] JSON decode error: {}", p.display()))
     }
 
     pub fn read_lines(path: impl AsRef<Path>) -> Option<Vec<String>> {
@@ -202,10 +187,6 @@ impl FileHandler {
         Self::hash_file::<Sha256>(path)
     }
 
-    // pub fn verify_md5(path: impl AsRef<Path>, expected: &str) -> bool {
-    //     Self::verify_hash_generic::<Md5>(path, expected)
-    // }
-
     pub fn verify_md5(path: impl AsRef<Path>, expected: &str) -> anyhow::Result<()> {
         let path: &Path = path.as_ref();
         let actual: String = Self::hash_file::<Md5>(path)
@@ -229,10 +210,10 @@ impl FileHandler {
 
     pub fn resolve_path(path: impl AsRef<Path>) -> io::Result<PathBuf> {
         let path: PathBuf = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent)?;
-            }
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent)?;
         }
         Ok(path)
     }
@@ -243,8 +224,7 @@ impl FileHandler {
         let mut buf: Vec<u8> = Vec::with_capacity(256);
         let mut ser: serde_json::Serializer<&mut Vec<u8>, serde_json::ser::PrettyFormatter<'_>> =
             serde_json::Serializer::with_formatter(&mut buf, formatter);
-        data.serialize(&mut ser)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        data.serialize(&mut ser).map_err(|e| io::Error::other(e))?;
         String::from_utf8(buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
     }
 

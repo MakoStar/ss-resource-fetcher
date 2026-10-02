@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
 use file_utils::FileHandler;
-use indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::error::Result;
-use crate::model::{Region, RegionBytes};
+use crate::model::Region;
 
 #[derive(Debug, Clone)]
 pub struct RegionFileStore {
+    /// 根目录
     base_dir: PathBuf,
+    /// 文件名
     filename: String,
 }
 
@@ -30,20 +31,6 @@ impl RegionFileStore {
         FileHandler::write_bytes(data, &path)?;
         log::info!("[{region}] saved path= {}", path.display());
         Ok(path)
-    }
-
-    pub fn save_bytes_all(&self, data: &RegionBytes) -> Result<()> {
-        for (region, bytes) in data {
-            self.save_bytes(region, bytes)?;
-        }
-        Ok(())
-    }
-
-    pub fn save_json_all<T: Serialize>(&self, data: &IndexMap<Region, T>) -> Result<()> {
-        for (region, value) in data {
-            self.save_json(region, value)?;
-        }
-        Ok(())
     }
 
     pub fn save_json<T: Serialize>(&self, region: &Region, value: &T) -> Result<PathBuf> {

@@ -7,6 +7,7 @@ use network_manager::HttpFetcher;
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::manifest::ManiResource;
+use crate::model::DownloadProgress;
 
 pub struct DefaultUrlTarget {
     /// 资源基础地址
@@ -42,7 +43,8 @@ impl DefaultUrlTarget {
 
         let total = wanted.len();
         for (index, (name, resource)) in wanted.iter().enumerate() {
-            self.download_one(name, resource, index + 1, total).await?;
+            let progress = DownloadProgress::new(index + 1, total);
+            self.download_one(name, resource, &progress).await?;
 
             if index + 1 < total {
                 log::debug!("{}", "-".repeat(64));
@@ -56,10 +58,9 @@ impl DefaultUrlTarget {
         &self,
         name: &str,
         resource: &ManiResource,
-        current: usize,
-        total: usize,
+        progress: &DownloadProgress,
     ) -> Result<()> {
-        let prefix = format!("[{current}/{total}]");
+        let prefix = progress.prefix();
         let save_path = self.output_dir.join(name);
 
         if self.is_cached(&save_path, resource, &prefix, name) {

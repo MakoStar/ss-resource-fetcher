@@ -4,11 +4,14 @@ use network_manager::HttpFetcher;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::model::{Region, RegionBytes};
+use crate::model::Region;
 
 pub struct ManifestFetcher {
+    /// 清单接口路径
     manifest_route: String,
+    /// 各区域服务器地址
     servers: IndexMap<Region, String>,
+    /// 请求客户端
     requester: HttpFetcher,
 }
 
@@ -55,16 +58,5 @@ impl ManifestFetcher {
         );
 
         Ok(bytes)
-    }
-
-    pub async fn fetch_all(&self) -> Result<RegionBytes> {
-        let mut manifests = IndexMap::with_capacity(self.servers.len());
-
-        for region in self.servers.keys() {
-            let bytes = self.fetch_one(region).await?;
-            manifests.insert(region.clone(), bytes);
-        }
-
-        Ok(manifests)
     }
 }

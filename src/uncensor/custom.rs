@@ -1,22 +1,13 @@
 use std::path::Path;
 
+use file_utils::FileHandler;
 use indexmap::IndexSet;
 use network_manager::HttpFetcher;
-use serde::Deserialize;
 
 use crate::config::AppConfig;
-use crate::error::{AppError, Result};
-use crate::model::Region;
-use crate::network::uncensor::region::RegionTarget;
-
-/// 自定义反和谐资源文件列表 
-///
-/// eg: `{ "region": "TW", "files": ["xxx.unity3d", ...] }`
-#[derive(Debug, Clone, Deserialize)]
-struct CustomFileList {
-    region: String,
-    files: Vec<String>,
-}
+use crate::error::Result;
+use crate::model::{CustomFileList, Region};
+use crate::uncensor::region::RegionTarget;
 
 pub struct CustomFilesTarget {
     /// 需要下载的资源文件名
@@ -68,19 +59,7 @@ impl CustomFilesTarget {
     }
 
     fn load(path: &Path) -> Result<CustomFileList> {
-        let content = std::fs::read_to_string(path).map_err(|err| {
-            AppError::message(format!(
-                "failed to read custom uncensor file list {}: {err}",
-                path.display()
-            ))
-        })?;
-
-        serde_json::from_str(&content).map_err(|err| {
-            AppError::message(format!(
-                "failed to parse custom uncensor file list {}: {err}",
-                path.display()
-            ))
-        })
+        Ok(FileHandler::read_json(path)?)
     }
 }
 

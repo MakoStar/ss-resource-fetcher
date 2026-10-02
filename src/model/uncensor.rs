@@ -1,23 +1,32 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use serde::Deserialize;
 
 use crate::model::Region;
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomFileList {
+    /// 区域
+    pub region: String,
+    /// 资源文件名列表
+    pub files: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum UncensorSource {
-    /// 与官方区域清单匹配后下载，区域取 `[UNCENSOR].SOURCE_REGION`
+    /// 与官方清单匹配后下载 区域取配置里的来源区域
     #[default]
     ConfigRegion,
-    /// 与官方区域清单匹配后下载，区域由命令行 `--uncensor-region` 指定
+    /// 与官方清单匹配后下载 区域由命令行指定
     Region(Region),
-    /// 不经过官方清单，直接用 `[UNCENSOR].URL` 上的同名资源下载
+    /// 直接用默认地址上的同名资源下载
     DefaultUrl,
-    /// 使用自定义反和谐文件列表（本地 JSON）
+    /// 使用自定义文件列表
     CustomFiles {
-        /// 自定义文件列表 JSON 路径
+        /// 自定义文件列表路径
         path: PathBuf,
-        /// 可选的区域覆盖; `None` 时用 JSON 里的 `region` 字段
+        /// 可选的区域覆盖 未指定时用文件列表里的区域
         region: Option<Region>,
     },
 }

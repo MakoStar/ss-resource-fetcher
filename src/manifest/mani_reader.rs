@@ -4,25 +4,33 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::error::Result;
+use crate::model::Region;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct ManiResource {
+    /// 资源文件名
     pub file: String,
+    /// 文件校验值
     pub hash: String,
+    /// 文件大小
     pub size: u64,
+    /// 文件类型
     pub file_type: String,
 }
 
 #[derive(Debug)]
 pub struct ManiReader {
+    /// 清单文件路径
     mani_file_path: PathBuf,
+    /// 资源条目
     resource_data: HashMap<String, ManiResource>,
+    /// 配置项
     config_data: HashMap<String, String>,
 }
 
 impl ManiReader {
-    pub fn new<P: AsRef<Path>>(main_file_path: P) -> Result<Self> {
+    pub fn new<P: AsRef<Path>>(main_file_path: P, region: Option<&Region>) -> Result<Self> {
         let path: PathBuf = main_file_path.as_ref().to_path_buf();
         let content: String = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read mani file: {}", path.display()))?;
@@ -63,12 +71,23 @@ impl ManiReader {
             }
         }
 
-        log::debug!(
-            "parsed mani: resources={}, configs={} | {}",
-            resource_data.len(),
-            config_data.len(),
-            path.display()
-        );
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        match region {
+            Some(region) => log::debug!(
+                "[{region}] parsed {name} resources={} configs={}",
+                resource_data.len(),
+                config_data.len()
+            ),
+            None => log::debug!(
+                "parsed {name} resources={} configs={}",
+                resource_data.len(),
+                config_data.len()
+            ),
+        }
 
         Ok(Self {
             mani_file_path: path,
@@ -144,7 +163,7 @@ mod tests {
     #[test]
     fn parses_resources_and_configs() {
         let file = write_sample(SAMPLE);
-        let reader = ManiReader::new(file.path()).expect("failed to parse");
+        let reader = ManiReader::new(file.path(), None).expect("failed to parse");
 
         assert_eq!(
             reader.get_resource_hash_by_patch("lua.arcx"),
@@ -167,14 +186,14 @@ mod tests {
 
     #[test]
     fn reports_missing_file_as_error() {
-        let err = ManiReader::new("definitely/not/here.mani").unwrap_err();
+        let err = ManiReader::new("definitely/not/here.mani", None).unwrap_err();
         assert!(err.to_string().contains("Failed to read mani file"));
     }
 
     #[test]
     fn tolerates_malformed_lines() {
         let file = write_sample("garbage-line\n$NO_COLON_HERE\nlua.arcx|hash|size\n");
-        let reader = ManiReader::new(file.path()).expect("failed to parse");
+        let reader = ManiReader::new(file.path(), None).expect("failed to parse");
 
         assert!(reader.get_resource_hash_by_patch("lua.arcx").is_none());
         assert!(reader.get_config_value_by_key("CLIENT_VER").is_none());

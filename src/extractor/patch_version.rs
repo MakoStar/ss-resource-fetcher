@@ -6,13 +6,18 @@ use crate::error::{AppError, Result};
 use crate::model::{Region, RegionResources, ResourceEntries};
 
 struct PatchCandidate {
+    /// 补丁序号
     num: u64,
+    /// 补丁版本
     version: u64,
 }
 
 pub struct PatchVersionExtractor<'a> {
+    /// 补丁标签前缀
     patch_tag_prefix: String,
+    /// 补丁标签后缀
     patch_tag_suffix: String,
+    /// 各区域补丁资源
     all_region_patches: &'a RegionResources,
 }
 
@@ -72,7 +77,7 @@ impl<'a> PatchVersionExtractor<'a> {
                     "patch_ver".to_string(),
                     Value::String(patch_version.to_string()),
                 );
-                log::debug!("[{region:<2}]  patch_ver={patch_version}");
+                log::info!("[{region:<2}]  patch_ver={patch_version}");
             }
 
             result.insert(region.to_string(), Value::Object(suffix_map));

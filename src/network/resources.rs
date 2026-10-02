@@ -6,29 +6,18 @@ use network_manager::HttpFetcher;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::model::{Region, RegionResources, ResourceEntry};
-
-#[derive(Clone, Copy)]
-struct Progress {
-    current: usize,
-    total: usize,
-}
-
-impl Progress {
-    fn new(current: usize, total: usize) -> Self {
-        Self { current, total }
-    }
-
-    fn prefix(&self) -> String {
-        format!("[{}/{}]", self.current, self.total)
-    }
-}
+use crate::model::{DownloadProgress, Region, RegionResources, ResourceEntry};
 
 pub struct ResourcesFetcher {
+    /// 资源接口路径
     resource_route: String,
+    /// 输出目录
     output_dir: PathBuf,
+    /// 各区域服务器地址
     servers: IndexMap<Region, String>,
+    /// 是否覆盖已存在的文件
     overwrite: bool,
+    /// 请求客户端
     requester: HttpFetcher,
 }
 
@@ -80,7 +69,7 @@ impl ResourcesFetcher {
                     server_url,
                     resource_name,
                     entry,
-                    Progress::new(index + 1, total),
+                    DownloadProgress::new(index + 1, total),
                 )
                 .await?;
 
@@ -99,7 +88,7 @@ impl ResourcesFetcher {
         server_url: &str,
         resource_name: &str,
         entry: &ResourceEntry,
-        progress: Progress,
+        progress: DownloadProgress,
     ) -> Result<()> {
         let save_path = self.output_path(region, resource_name);
 
@@ -154,7 +143,7 @@ impl ResourcesFetcher {
         expected_hash: &str,
         region: &Region,
         resource_name: &str,
-        progress: Progress,
+        progress: DownloadProgress,
     ) -> bool {
         if self.overwrite {
             return false;

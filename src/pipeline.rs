@@ -17,18 +17,23 @@ pub struct PipelineOptions {
     /// 是否生成主清单记录
     pub generate_manifest_record: bool,
 
-    /// 是否只下载 Uncensor 资源包
+    /// 是否只下载反和谐资源包
     pub download_uncensor_pack: bool,
 
-    /// Uncensor 资源包的下载来源
+    /// 反和谐资源包的下载来源
     pub uncensor_source: UncensorSource,
 }
 
 pub struct ResourcePipeline {
+    /// 全局配置
     config: &'static AppConfig,
+    /// 原始清单存储
     raw_manifest_store: RegionFileStore,
+    /// 解密清单存储
     decrypted_manifest_store: RegionFileStore,
+    /// 解码清单存储
     decoded_manifest_store: RegionFileStore,
+    /// 补丁清单存储
     patch_manifest_store: RegionFileStore,
 }
 
@@ -102,35 +107,48 @@ impl ResourcePipeline {
     }
 
     async fn fetch_manifests(&self) -> Result<RegionBytes> {
-        let manifests = ManifestFetcher::from_app_config(self.config)
-            .fetch_all()
-            .await?;
+        let fetcher = ManifestFetcher::from_app_config(self.config);
+        let save = self.config.feature_flags.is_save_raw_manifest;
+        let mut manifests = RegionBytes::new();
 
-        if self.config.feature_flags.is_save_raw_manifest {
-            self.raw_manifest_store.save_bytes_all(&manifests)?;
+        for region in self.config.regions() {
+            let bytes = fetcher.fetch_one(&region).await?;
+            if save {
+                self.raw_manifest_store.save_bytes(&region, &bytes)?;
+            }
+            manifests.insert(region, bytes);
         }
 
         Ok(manifests)
     }
 
     fn decrypt_manifests(&self, raw: &RegionBytes) -> Result<RegionBytes> {
-        let decrypted = ManifestDecryptor::from_app_config(self.config).decrypt_all(raw)?;
+        let decryptor = ManifestDecryptor::from_app_config(self.config);
+        let save = self.config.feature_flags.is_save_decrypted_manifest;
+        let mut decrypted = RegionBytes::new();
 
-        if self.config.feature_flags.is_save_decrypted_manifest {
-            self.decrypted_manifest_store.save_bytes_all(&decrypted)?;
+        for (region, bytes) in raw {
+            let data = decryptor.decrypt_one(region, bytes)?;
+            if save {
+                self.decrypted_manifest_store.save_bytes(region, &data)?;
+            }
+            decrypted.insert(region.clone(), data);
         }
 
         Ok(decrypted)
     }
 
     fn decode_manifests(&self, decrypted: &RegionBytes) -> Result<RegionFileDiffs> {
-        let decoded = ManifestDecoder::decode_all(decrypted)?;
+        let save = self.config.feature_flags.is_save_decoded_manifest;
+        let mut decoded = RegionFileDiffs::new();
 
-        if self.config.feature_flags.is_save_decoded_manifest {
-            let store = &self.decoded_manifest_store;
-            for (region, diffs) in &decoded {
-                store.save_json(region, &ManifestDecoder::json_view(diffs))?;
+        for (region, bytes) in decrypted {
+            let diffs = ManifestDecoder::decode_one(region, bytes)?;
+            if save {
+                self.decoded_manifest_store
+                    .save_json(region, &ManifestDecoder::json_view(&diffs))?;
             }
+            decoded.insert(region.clone(), diffs);
         }
 
         Ok(decoded)
@@ -142,14 +160,20 @@ impl ResourcePipeline {
         options: &PipelineOptions,
     ) -> Result<RegionResources> {
         let extractor = PatchManifestExtractor::from_app_config(self.config);
-        let patches = if options.generate_manifest_record {
-            extractor.extract_root(decoded)?
-        } else {
-            extractor.extract(decoded)?
-        };
+        let save = self.config.feature_flags.is_save_patch_manifest;
+        let mut patches = RegionResources::new();
 
-        if self.config.feature_flags.is_save_patch_manifest {
-            self.patch_manifest_store.save_json_all(&patches)?;
+        for (region, diffs) in decoded {
+            let entries = if options.generate_manifest_record {
+                extractor.extract_root_one(region, diffs)
+            } else {
+                extractor.extract_one(region, diffs)?
+            };
+
+            if save {
+                self.patch_manifest_store.save_json(region, &entries)?;
+            }
+            patches.insert(region.clone(), entries);
         }
 
         Ok(patches)

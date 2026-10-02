@@ -6,15 +6,15 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default)]
 struct CompiledRegistry {
-    /// 带 `^...$` 锚定的完整匹配正则
+    /// 完整匹配正则
     full_patterns: Vec<Regex>,
-    /// 去掉 `^` 后的后缀匹配正则
+    /// 后缀匹配正则
     suffix_patterns: Vec<Regex>,
-    /// `NEED_FETCH_FILES` 名称集合
+    /// 待抓取文件名集合
     fetch_names: HashSet<String>,
-    /// `NEED_FETCH_FILES` 对应的 `.name` 后缀列表
+    /// 待抓取文件的后缀列表
     fetch_extensions: Vec<String>,
-    /// `UNPACK_FILES` 名称集合
+    /// 待解包文件名集合
     unpack_names: HashSet<String>,
 }
 
@@ -62,7 +62,7 @@ pub struct ResourceRegistryConfig {
     /// 需要获取的文件列表
     #[serde(rename = "NEED_FETCH_FILES")]
     pub need_fetch_files: Vec<String>,
-    
+
     /// 需要解包的文件列表
     #[serde(rename = "UNPACK_FILES")]
     pub unpack_files: Vec<String>,
@@ -71,7 +71,7 @@ pub struct ResourceRegistryConfig {
     #[serde(rename = "BASE_RESOURCE_PATTERNS")]
     pub base_resource_patterns: Vec<String>,
 
-    /// 派生数据(不参与序列化) 反序列化后按当前字段惰性重建
+    /// 编译后的注册表 不参与序列化
     #[serde(skip)]
     compiled: Arc<OnceLock<CompiledRegistry>>,
 }

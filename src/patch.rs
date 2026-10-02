@@ -14,21 +14,35 @@ use crate::manifest::ManiReader;
 use crate::model::{Region, ResourceEntries};
 
 pub struct PatchMerger {
+    /// 区域列表
     regions: Vec<Region>,
+    /// 待解包文件名
     unpack_filenames: Vec<String>,
+    /// 清单输出目录
     manifest_output_dir: PathBuf,
+    /// 补丁清单文件名
     patch_manifest_filename: String,
+    /// 补丁来源目录
     patch_source_dir: PathBuf,
+    /// 解包输出目录
     unpack_output_dir: PathBuf,
+    /// 根清单文件名
     root_mani_filename: String,
+    /// 附加清单文件名
     add_manifest_filename: String,
+    /// 资源补丁标签
     update_resource_patch_tag: String,
+    /// 清单补丁标签
     update_manifest_patch_tag: String,
+    /// 清单扩展名
     manifest_extension: String,
+    /// 是否启用正则过滤
     use_resource_regex: bool,
+    /// 资源注册表
     registry: ResourceRegistryConfig,
-
+    /// 补丁清单缓存
     manifest_cache: RefCell<HashMap<Region, Rc<ResourceEntries>>>,
+    /// 清单文件缓存
     mani_cache: RefCell<HashMap<PathBuf, Rc<ManiReader>>>,
 }
 
@@ -246,7 +260,7 @@ impl PatchMerger {
     ) -> Result<String> {
         let mani_path = self.update_mani_path(region, file_name, patch_name);
 
-        match self.read_resource_hash(&mani_path, file_name) {
+        match self.read_resource_hash(region, &mani_path, file_name) {
             Ok(hash) => Ok(hash),
             Err(err) => self.fallback_hash(region, file_name, err),
         }
@@ -255,7 +269,7 @@ impl PatchMerger {
     fn expected_original_hash(&self, region: &Region, file_name: &str) -> Result<String> {
         let mani_path = self.add_mani_path(region);
 
-        match self.read_resource_hash(&mani_path, file_name) {
+        match self.read_resource_hash(region, &mani_path, file_name) {
             Ok(hash) => Ok(hash),
             Err(err) if !self.use_resource_regex => Err(err),
             Err(err) => self.fallback_hash(region, file_name, err),
@@ -346,12 +360,12 @@ impl PatchMerger {
         Ok(cached)
     }
 
-    fn load_mani(&self, mani_path: &Path) -> Result<Rc<ManiReader>> {
+    fn load_mani(&self, region: &Region, mani_path: &Path) -> Result<Rc<ManiReader>> {
         if let Some(cached) = self.mani_cache.borrow().get(mani_path) {
             return Ok(Rc::clone(cached));
         }
 
-        let reader = ManiReader::new(mani_path)?;
+        let reader = ManiReader::new(mani_path, Some(region))?;
         let cached = Rc::new(reader);
         self.mani_cache
             .borrow_mut()
@@ -360,8 +374,13 @@ impl PatchMerger {
         Ok(cached)
     }
 
-    fn read_resource_hash(&self, mani_path: &Path, file_name: &str) -> Result<String> {
-        let reader = self.load_mani(mani_path)?;
+    fn read_resource_hash(
+        &self,
+        region: &Region,
+        mani_path: &Path,
+        file_name: &str,
+    ) -> Result<String> {
+        let reader = self.load_mani(region, mani_path)?;
 
         reader
             .get_resource_hash_by_patch(file_name)

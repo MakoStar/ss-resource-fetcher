@@ -4,12 +4,14 @@ use prost::Message;
 
 use crate::error::{AppError, Result};
 use crate::generated::{FileDiff, PbClientDiff};
-use crate::model::{Region, RegionBytes, RegionFileDiffs};
+use crate::model::Region;
 
 pub struct ManifestDecoder;
 
 impl ManifestDecoder {
     pub fn decode_one(region: &Region, data: &[u8]) -> Result<Vec<FileDiff>> {
+        logger::head!("DECODE MANIFEST {region}");
+
         if data.is_empty() {
             return Err(AppError::EmptyData {
                 context: format!("[{region}] decrypted manifest"),
@@ -23,22 +25,6 @@ impl ManifestDecoder {
         log::debug!("[{region}] decoded {} entries", diffs.len());
 
         Ok(diffs)
-    }
-
-    pub fn decode_all(decrypted: &RegionBytes) -> Result<RegionFileDiffs> {
-        if decrypted.is_empty() {
-            return Err(AppError::EmptyData {
-                context: "decrypted manifest".into(),
-            });
-        }
-
-        let mut decoded = IndexMap::with_capacity(decrypted.len());
-        for (region, data) in decrypted {
-            logger::head!("DECODE MANIFEST {region}");
-            decoded.insert(region.clone(), Self::decode_one(region, data)?);
-        }
-
-        Ok(decoded)
     }
 
     pub fn json_view(diffs: &[FileDiff]) -> IndexMap<&str, &FileDiff> {

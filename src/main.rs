@@ -28,7 +28,12 @@ async fn main() -> Result<()> {
     let options = PipelineOptions {
         generate_manifest_record: args.generate_manifest_record,
         download_uncensor_pack: args.download_uncensor_pack,
-        uncensor_source: UncensorSource::resolve(args.uncensor_region, args.uncensor_default_url),
+        uncensor_source: UncensorSource::resolve(
+            args.uncensor_region,
+            args.uncensor_default_url,
+            args.uncensor_custom_files,
+            args.uncensor_custom_files_path,
+        )?,
     };
 
     ResourcePipeline::new(AppConfig::get()).run(&options).await

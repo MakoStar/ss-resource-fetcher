@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::Parser;
 use unicode_width::UnicodeWidthStr;
 
@@ -24,6 +26,24 @@ pub struct Args {
     /// 直接使用 Uncensor 默认地址下载资源
     #[arg(short = 'U', long = "uncensor-default-url", default_value_t = false)]
     pub uncensor_default_url: bool,
+
+    /// 使用自定义反和谐文件列表
+    #[arg(
+        short = 'c',
+        long = "uncensor-custom-files",
+        requires = "uncensor_custom_files_path",
+        conflicts_with = "uncensor_default_url",
+        default_value_t = false
+    )]
+    pub uncensor_custom_files: bool,
+
+    /// 自定义反和谐文件列表 JSON 路径
+    #[arg(
+        long = "uncensor-custom-files-path",
+        value_name = "PATH",
+        requires = "uncensor_custom_files"
+    )]
+    pub uncensor_custom_files_path: Option<PathBuf>,
 }
 
 #[macro_export]

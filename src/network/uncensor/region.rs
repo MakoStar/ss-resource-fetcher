@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use network_manager::HttpFetcher;
 
 use crate::config::AppConfig;
@@ -62,6 +62,11 @@ impl RegionTarget {
     }
 
     pub async fn download(&self, wanted: &IndexMap<String, ManiResource>) -> Result<()> {
+        let names: IndexSet<String> = wanted.keys().cloned().collect();
+        self.download_names(&names).await
+    }
+
+    pub async fn download_names(&self, wanted: &IndexSet<String>) -> Result<()> {
         let entries = self.match_source_resources(wanted).await?;
         if entries.is_empty() {
             return Err(AppError::message(format!(
@@ -77,10 +82,7 @@ impl RegionTarget {
         self.resources_fetcher.fetch_and_save(&resources).await
     }
 
-    async fn match_source_resources(
-        &self,
-        wanted: &IndexMap<String, ManiResource>,
-    ) -> Result<ResourceEntries> {
+    async fn match_source_resources(&self, wanted: &IndexSet<String>) -> Result<ResourceEntries> {
         let raw = self.manifest_fetcher.fetch_one(&self.region).await?;
         let decrypted = self.decryptor.decrypt_one(&self.region, &raw)?;
         let diffs: Vec<FileDiff> = ManifestDecoder::decode_one(&self.region, &decrypted)?;
@@ -89,14 +91,14 @@ impl RegionTarget {
         let mut matched: HashSet<&str> = HashSet::with_capacity(wanted.len());
 
         for diff in &diffs {
-            if wanted.contains_key(&diff.file_name) {
+            if wanted.contains(diff.file_name.as_str()) {
                 matched.insert(diff.file_name.as_str());
                 entries.insert(diff.file_name.clone(), ResourceEntry::from(diff));
             }
         }
 
         for missing in wanted
-            .keys()
+            .iter()
             .filter(|name| !matched.contains(name.as_str()))
         {
             log::warn!(

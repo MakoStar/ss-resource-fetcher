@@ -17,7 +17,7 @@ pub struct PipelineOptions {
     /// 是否生成主清单记录
     pub generate_manifest_record: bool,
 
-    /// 是否只下载 Uncensor 资源包（独占任务）
+    /// 是否只下载 Uncensor 资源包
     pub download_uncensor_pack: bool,
 
     /// Uncensor 资源包的下载来源
@@ -64,7 +64,7 @@ impl ResourcePipeline {
 
         if options.uncensor_source != UncensorSource::ConfigRegion {
             logger::tips!(
-                "--uncensor-region / --uncensor-default-url only work together with --download-uncensor-pack."
+                "uncensor options (--uncensor-region / --uncensor-default-url / --uncensor-custom-files) only work together with --download-uncensor-pack."
             );
         }
 

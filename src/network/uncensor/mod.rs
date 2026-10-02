@@ -1,3 +1,4 @@
+mod custom_files;
 mod default_url;
 mod region;
 
@@ -11,6 +12,7 @@ use crate::config::AppConfig;
 use crate::error::Result;
 use crate::manifest::{ManiReader, ManiResource};
 use crate::model::{Region, UncensorSource};
+use crate::network::uncensor::custom_files::CustomFilesTarget;
 use crate::network::uncensor::default_url::DefaultUrlTarget;
 use crate::network::uncensor::region::RegionTarget;
 
@@ -30,6 +32,8 @@ enum UncensorTarget {
     Region(Box<RegionTarget>),
     /// 直接从反和谐资源清单服务器下载
     DefaultUrl(Box<DefaultUrlTarget>),
+    /// 读取本地自定义文件列表后，与官方区域清单匹配下载
+    CustomFiles(Box<CustomFilesTarget>),
 }
 
 impl UncensorPatchFetcher {
@@ -48,6 +52,14 @@ impl UncensorPatchFetcher {
     }
 
     pub async fn fetch_all(&self) -> Result<()> {
+        if let UncensorTarget::CustomFiles(target) = &self.target {
+            return target.download().await;
+        }
+
+        self.fetch_from_manifest().await
+    }
+
+    async fn fetch_from_manifest(&self) -> Result<()> {
         logger::head!("FETCH UNCENSOR MANIFEST");
 
         let wanted = self.download_resource_entries().await?;
@@ -107,6 +119,9 @@ impl UncensorTarget {
                     app, &region, requester,
                 )?)))
             }
+            UncensorSource::CustomFiles { path, region } => Ok(Self::CustomFiles(Box::new(
+                CustomFilesTarget::new(app, path, region.as_ref(), requester)?,
+            ))),
         }
     }
 
@@ -114,6 +129,7 @@ impl UncensorTarget {
         match self {
             Self::Region(target) => target.output_dir(),
             Self::DefaultUrl(target) => target.output_dir(),
+            Self::CustomFiles(target) => target.output_dir(),
         }
     }
 
@@ -121,6 +137,7 @@ impl UncensorTarget {
         match self {
             Self::Region(target) => target.download(wanted).await,
             Self::DefaultUrl(target) => target.download(wanted).await,
+            Self::CustomFiles(_) => unreachable!("custom files are handled in fetch_all"),
         }
     }
 }

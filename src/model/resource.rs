@@ -7,9 +7,13 @@ use crate::model::Region;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ResourceEntry {
+    /// 资源文件名
     pub file_name: String,
+    /// 文件校验值
     pub hash: String,
+    /// 资源版本
     pub version: u64,
+    /// 附加路径
     pub additional_path: String,
 }
 

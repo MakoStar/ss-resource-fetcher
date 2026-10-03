@@ -2,7 +2,10 @@ use std::borrow::Borrow;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Region(String);
+pub struct Region(
+    /// 区域名
+    String,
+);
 
 impl Region {
     pub fn new(value: impl Into<String>) -> Self {

@@ -3,14 +3,13 @@ use std::io::Read;
 use aes::Aes128;
 use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockModeDecrypt, KeyIvInit};
-use anyhow::Context;
 use cbc::Decryptor;
 use flate2::read::GzDecoder;
 use indexmap::IndexMap;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::model::{Region, RegionBytes};
+use crate::model::Region;
 
 const KEY_LEN: usize = 16;
 const IV_LEN: usize = 16;
@@ -18,6 +17,7 @@ const IV_LEN: usize = 16;
 type Aes128CbcDecryptor = Decryptor<Aes128>;
 
 pub struct ManifestDecryptor {
+    /// 各区域解密密钥
     keys: IndexMap<Region, String>,
 }
 
@@ -37,6 +37,8 @@ impl ManifestDecryptor {
     }
 
     pub fn decrypt_one(&self, region: &Region, data: &[u8]) -> Result<Vec<u8>> {
+        logger::head!("DECRYPT MANIFEST {region}");
+
         let key = self
             .keys
             .get(region)
@@ -76,20 +78,6 @@ impl ManifestDecryptor {
             })?;
 
         Self::log_preview(region, &decrypted);
-
-        Ok(decrypted)
-    }
-
-    pub fn decrypt_all(&self, raw: &RegionBytes) -> Result<RegionBytes> {
-        let mut decrypted = IndexMap::with_capacity(raw.len());
-
-        for (region, bytes) in raw {
-            logger::head!("DECRYPT MANIFEST {region}");
-            let data = self
-                .decrypt_one(region, bytes)
-                .with_context(|| format!("Failed to decrypt region '{region}'"))?;
-            decrypted.insert(region.clone(), data);
-        }
 
         Ok(decrypted)
     }
@@ -156,7 +144,7 @@ impl ManifestDecryptor {
         }
 
         let preview_len = std::cmp::min(32, data.len());
-        log::debug!("[{region}] hex={}", hex::encode(&data[..preview_len]));
+        log::info!("[{region}] hex={}", hex::encode(&data[..preview_len]));
     }
 }
 

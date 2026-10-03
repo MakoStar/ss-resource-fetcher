@@ -32,6 +32,8 @@ const SECTION_COMMENTS: &[(&str, &str, &[&str])] = &[
             "命令行加 -u / --download-uncensor-pack 才会执行（独占任务，不跑常规流水线）",
             "URL: 第三方 Uncensor 清单服务器",
             "SOURCE_REGION: 实际下载资源所用的官方区域",
+            "-u -r/--uncensor-region <区域>: 覆盖 SOURCE_REGION，走官方清单匹配下载",
+            "-u -U/--uncensor-default-url: 直接用 URL 下的资源下载，输出到 UNCENSOR_DEFAULT_OUTPUT_DIR",
         ],
     ),
     (

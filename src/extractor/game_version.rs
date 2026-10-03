@@ -8,12 +8,19 @@ use crate::manifest::ManiReader;
 use crate::model::Region;
 
 pub struct GameVersionExtractor {
+    /// 默认版本键
     default_version_key: String,
+    /// 客户端版本键
     client_version_key: String,
+    /// 游戏版本键
     game_version_key: String,
+    /// 补丁版本键
     patch_version_key: String,
+    /// 补丁清单目录
     patch_metadata_dir: PathBuf,
+    /// 根清单文件名
     root_manifest_filename: String,
+    /// 区域列表
     regions: Vec<Region>,
 }
 
@@ -42,13 +49,13 @@ impl GameVersionExtractor {
         let mut result = Map::with_capacity(self.regions.len());
 
         for region in &self.regions {
-            let reader = ManiReader::new(self.manifest_patch_path(region))?;
+            let reader = ManiReader::new(self.manifest_patch_path(region), Some(region))?;
 
             let client_ver = self.config_value(&reader, &self.client_version_key);
             let game_ver = self.config_value(&reader, &self.game_version_key);
             let patch_ver = self.config_value(&reader, &self.patch_version_key);
 
-            log::debug!(
+            log::info!(
                 "[{region}] CLIENT_VER={client_ver}, GAME_VER={game_ver}, BIN_DIFF_PATCH_VER={patch_ver}",
             );
 

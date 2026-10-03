@@ -7,25 +7,33 @@ use crate::config::AppConfig;
 use crate::error::Result;
 use crate::extractor::{GameVersionExtractor, PatchManifestExtractor, PatchVersionExtractor};
 use crate::manifest::{ManifestDecoder, ManifestDecryptor};
-use crate::model::{RegionBytes, RegionFileDiffs, RegionResources};
+use crate::model::{RegionBytes, RegionFileDiffs, RegionResources, UncensorSource};
 use crate::network::{ManifestFetcher, ResourcesFetcher, UncensorPatchFetcher};
 use crate::patch::PatchMerger;
 use crate::storage::RegionFileStore;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PipelineOptions {
     /// 是否生成主清单记录
     pub generate_manifest_record: bool,
 
     /// 是否只下载反和谐资源包
     pub download_uncensor_pack: bool,
+
+    /// 反和谐资源包的下载来源
+    pub uncensor_source: UncensorSource,
 }
 
 pub struct ResourcePipeline {
+    /// 全局配置
     config: &'static AppConfig,
+    /// 原始清单存储
     raw_manifest_store: RegionFileStore,
+    /// 解密清单存储
     decrypted_manifest_store: RegionFileStore,
+    /// 解码清单存储
     decoded_manifest_store: RegionFileStore,
+    /// 补丁清单存储
     patch_manifest_store: RegionFileStore,
 }
 
@@ -56,7 +64,13 @@ impl ResourcePipeline {
                     "--download-uncensor-pack is exclusive: ignoring --generate-manifest-record."
                 );
             }
-            return self.download_uncensor_pack().await;
+            return self.download_uncensor_pack(options).await;
+        }
+
+        if options.uncensor_source != UncensorSource::ConfigRegion {
+            logger::tips!(
+                "uncensor options (--uncensor-region / --uncensor-default-url / --uncensor-custom-files) only work together with --download-uncensor-pack."
+            );
         }
 
         let flags = &self.config.feature_flags;
@@ -86,42 +100,55 @@ impl ResourcePipeline {
         Ok(())
     }
 
-    async fn download_uncensor_pack(&self) -> Result<()> {
-        UncensorPatchFetcher::from_app_config(self.config)?
+    async fn download_uncensor_pack(&self, options: &PipelineOptions) -> Result<()> {
+        UncensorPatchFetcher::from_app_config(self.config, &options.uncensor_source)?
             .fetch_all()
             .await
     }
 
     async fn fetch_manifests(&self) -> Result<RegionBytes> {
-        let manifests = ManifestFetcher::from_app_config(self.config)
-            .fetch_all()
-            .await?;
+        let fetcher = ManifestFetcher::from_app_config(self.config);
+        let save = self.config.feature_flags.is_save_raw_manifest;
+        let mut manifests = RegionBytes::new();
 
-        if self.config.feature_flags.is_save_raw_manifest {
-            self.raw_manifest_store.save_bytes_all(&manifests)?;
+        for region in self.config.regions() {
+            let bytes = fetcher.fetch_one(&region).await?;
+            if save {
+                self.raw_manifest_store.save_bytes(&region, &bytes)?;
+            }
+            manifests.insert(region, bytes);
         }
 
         Ok(manifests)
     }
 
     fn decrypt_manifests(&self, raw: &RegionBytes) -> Result<RegionBytes> {
-        let decrypted = ManifestDecryptor::from_app_config(self.config).decrypt_all(raw)?;
+        let decryptor = ManifestDecryptor::from_app_config(self.config);
+        let save = self.config.feature_flags.is_save_decrypted_manifest;
+        let mut decrypted = RegionBytes::new();
 
-        if self.config.feature_flags.is_save_decrypted_manifest {
-            self.decrypted_manifest_store.save_bytes_all(&decrypted)?;
+        for (region, bytes) in raw {
+            let data = decryptor.decrypt_one(region, bytes)?;
+            if save {
+                self.decrypted_manifest_store.save_bytes(region, &data)?;
+            }
+            decrypted.insert(region.clone(), data);
         }
 
         Ok(decrypted)
     }
 
     fn decode_manifests(&self, decrypted: &RegionBytes) -> Result<RegionFileDiffs> {
-        let decoded = ManifestDecoder::decode_all(decrypted)?;
+        let save = self.config.feature_flags.is_save_decoded_manifest;
+        let mut decoded = RegionFileDiffs::new();
 
-        if self.config.feature_flags.is_save_decoded_manifest {
-            let store = &self.decoded_manifest_store;
-            for (region, diffs) in &decoded {
-                store.save_json(region, &ManifestDecoder::json_view(diffs))?;
+        for (region, bytes) in decrypted {
+            let diffs = ManifestDecoder::decode_one(region, bytes)?;
+            if save {
+                self.decoded_manifest_store
+                    .save_json(region, &ManifestDecoder::json_view(&diffs))?;
             }
+            decoded.insert(region.clone(), diffs);
         }
 
         Ok(decoded)
@@ -133,14 +160,20 @@ impl ResourcePipeline {
         options: &PipelineOptions,
     ) -> Result<RegionResources> {
         let extractor = PatchManifestExtractor::from_app_config(self.config);
-        let patches = if options.generate_manifest_record {
-            extractor.extract_root(decoded)?
-        } else {
-            extractor.extract(decoded)?
-        };
+        let save = self.config.feature_flags.is_save_patch_manifest;
+        let mut patches = RegionResources::new();
 
-        if self.config.feature_flags.is_save_patch_manifest {
-            self.patch_manifest_store.save_json_all(&patches)?;
+        for (region, diffs) in decoded {
+            let entries = if options.generate_manifest_record {
+                extractor.extract_root_one(region, diffs)
+            } else {
+                extractor.extract_one(region, diffs)?
+            };
+
+            if save {
+                self.patch_manifest_store.save_json(region, &entries)?;
+            }
+            patches.insert(region.clone(), entries);
         }
 
         Ok(patches)

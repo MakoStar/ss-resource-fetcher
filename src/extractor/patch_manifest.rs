@@ -1,18 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
-use indexmap::IndexMap;
-
 use crate::config::{AppConfig, ResourceRegistryConfig};
 use crate::error::{AppError, Result};
 use crate::generated::FileDiff;
-use crate::model::{Region, RegionFileDiffs, RegionResources, ResourceEntries, ResourceEntry};
+use crate::model::{Region, ResourceEntries, ResourceEntry};
 
 pub struct PatchManifestExtractor {
+    /// 补丁标签前缀
     patch_tag_prefix: String,
+    /// 清单扩展名
     manifest_extension: String,
+    /// 主清单文件名
     main_manifest_filename: String,
+    /// 首个清单补丁名
     first_manifest_patch_name: String,
+    /// 是否启用正则过滤
     use_resource_regex: bool,
+    /// 资源注册表
     registry: ResourceRegistryConfig,
 }
 
@@ -28,33 +32,20 @@ impl PatchManifestExtractor {
         }
     }
 
-    pub fn extract(&self, decoded: &RegionFileDiffs) -> Result<RegionResources> {
-        let mut result = IndexMap::with_capacity(decoded.len());
+    pub fn extract_one(&self, region: &Region, diffs: &[FileDiff]) -> Result<ResourceEntries> {
+        logger::head!("EXTRACT PATCH MANIFEST {region}");
 
-        for (region, diffs) in decoded {
-            logger::head!("EXTRACT PATCH MANIFEST {region}");
+        let resources = Self::to_resource_map(diffs);
+        let selected = self.select_downloadable(&resources);
 
-            let resources = Self::to_resource_map(diffs);
-            let selected = self.select_downloadable(&resources);
-            let filtered = self.filter_outdated_patches(region, selected)?;
-
-            result.insert(region.clone(), filtered);
-        }
-
-        Ok(result)
+        self.filter_outdated_patches(region, selected)
     }
 
-    pub fn extract_root(&self, decoded: &RegionFileDiffs) -> Result<RegionResources> {
-        let mut result = IndexMap::with_capacity(decoded.len());
+    pub fn extract_root_one(&self, region: &Region, diffs: &[FileDiff]) -> ResourceEntries {
+        logger::head!("EXTRACT ROOT MANIFEST {region}");
 
-        for (region, diffs) in decoded {
-            logger::head!("EXTRACT ROOT MANIFEST {region}");
-
-            let resources = Self::to_resource_map(diffs);
-            result.insert(region.clone(), self.select_root_manifest(&resources));
-        }
-
-        Ok(result)
+        let resources = Self::to_resource_map(diffs);
+        self.select_root_manifest(&resources)
     }
 
     fn to_resource_map(diffs: &[FileDiff]) -> ResourceEntries {
@@ -339,7 +330,7 @@ mod tests {
             5,
             &suffix_index,
         ));
-        
+
         assert!(!extractor.is_patch_obsolete(
             "p_7_m.ss_win.mani",
             &entry("p_7_m.ss_win.mani", 7),

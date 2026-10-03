@@ -6,7 +6,7 @@ use network_manager::HttpFetcher;
 
 use crate::config::AppConfig;
 use crate::error::{AppError, Result};
-use crate::model::{DownloadProgress, Region, RegionResources, ResourceEntry};
+use crate::model::{DownloadProgress, Region, RegionResources, ResourceEntry, SEPARATOR};
 
 pub struct ResourcesFetcher {
     /// 资源接口路径
@@ -74,7 +74,7 @@ impl ResourcesFetcher {
                 .await?;
 
                 if index + 1 < total {
-                    log::debug!("{}", "-".repeat(64));
+                    log::debug!("{SEPARATOR}");
                 }
             }
         }
@@ -149,26 +149,18 @@ impl ResourcesFetcher {
             return false;
         }
 
+        let prefix: String = progress.prefix();
+
         if !save_path.is_file() {
-            logger::step!(
-                "{} {region} {resource_name} not found locally, will download",
-                progress.prefix()
-            );
+            logger::step!("[{region}] {prefix} {resource_name} not found locally, will download");
             return false;
         }
 
         if FileHandler::verify_md5(save_path, expected_hash).is_ok() {
-            logger::step!(
-                "{} SKIP (cached): {}",
-                progress.prefix(),
-                save_path.display()
-            );
+            logger::step!("[{region}] {prefix} SKIP (cached): {resource_name}");
             true
         } else {
-            log::warn!(
-                "{} {region} {resource_name} MD5 mismatch, will re-download",
-                progress.prefix()
-            );
+            log::warn!("[{region}] {prefix} {resource_name} MD5 mismatch, will re-download");
             false
         }
     }

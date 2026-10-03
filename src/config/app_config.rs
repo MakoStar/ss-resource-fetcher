@@ -1,14 +1,15 @@
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use indexmap::IndexMap;
 use network_manager::FetcherConfig;
 use serde::{Deserialize, Serialize};
 
-use super::sections::STATIC_RESOURCE_SERVERS;
-use crate::config::{APP_CONFIG, ServerConfig};
+use super::servers::STATIC_RESOURCE_SERVERS;
+use crate::config::{APP_CONFIG, ServerConfig, config_comments_enabled};
 use crate::config::{ExtractorConfig, FeatureFlags, FileNameConfig, ResourceRegistryConfig};
-use crate::config::{FilePathConfig, RequestConfig, ServerRouteConfig, UncensorConfig};
+use crate::config::{FilePathConfig, LauncherConfig};
+use crate::config::{RequestConfig, ServerRouteConfig, UncensorConfig};
 use crate::model::Region;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +47,10 @@ pub struct AppConfig {
     #[serde(rename = "UNCENSOR")]
     pub uncensor: UncensorConfig,
 
+    /// launcher 配置
+    #[serde(rename = "LAUNCHER")]
+    pub launcher: LauncherConfig,
+
     /// 各区域服务器
     #[serde(rename = "SERVERS")]
     pub servers: IndexMap<String, ServerConfig>,
@@ -57,8 +62,8 @@ pub struct AppConfig {
 
 impl AppConfig {
     #[inline(always)]
-    pub fn get() -> &'static AppConfig {
-        &APP_CONFIG
+    pub fn get() -> Result<&'static AppConfig> {
+        APP_CONFIG.as_ref().map_err(|err| anyhow!("{err}"))
     }
 
     pub fn available_regions(&self) -> impl Iterator<Item = &str> {
@@ -81,7 +86,7 @@ impl AppConfig {
             return Some(config.clone());
         }
 
-        super::sections::STATIC_RESOURCE_SERVERS
+        super::servers::STATIC_RESOURCE_SERVERS
             .get(region.as_str())
             .map(ServerConfig::from)
     }
@@ -96,15 +101,19 @@ impl AppConfig {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create dir {}", parent.display()))?;
         }
-        let content: String = self.to_toml_with_comments();
+        let content: String = self.to_toml(config_comments_enabled());
         std::fs::write(path, content)
             .with_context(|| format!("failed to write {}", path.display()))?;
 
         Ok(())
     }
 
-    fn to_toml_with_comments(&self) -> String {
+    fn to_toml(&self, with_comments: bool) -> String {
         let content: String = toml::to_string_pretty(self).expect("failed to serialize AppConfig");
+
+        if with_comments {
+            return super::comments::apply(&content);
+        }
 
         content
     }
@@ -118,7 +127,7 @@ impl AppConfig {
             );
         }
 
-        let dirs: [(&str, &str); 7] = [
+        let dirs: [(&str, &str); 8] = [
             ("ROOT_OUTPUT_DIR", &self.file_path.root_output_dir),
             ("MANIFEST_OUTPUT_DIR", &self.file_path.manifest_output_dir),
             ("VERSIONS_OUTPUT_DIR", &self.file_path.versions_output_dir),
@@ -129,6 +138,7 @@ impl AppConfig {
                 "UNCENSOR_DEFAULT_OUTPUT_DIR",
                 &self.file_path.uncensor_default_output_dir,
             ),
+            ("LAUNCHER_OUTPUT_DIR", &self.file_path.launcher_output_dir),
         ];
 
         for (key, dir) in dirs {
@@ -137,7 +147,7 @@ impl AppConfig {
             }
         }
 
-        let names: [(&str, &str); 5] = [
+        let names: [(&str, &str); 6] = [
             ("MANIFEST_RAW_FILE", &self.file_name.manifest_raw_file),
             (
                 "MANIFEST_DECRYPT_FILE",
@@ -149,6 +159,10 @@ impl AppConfig {
             ),
             ("PATCH_MANIFEST_FILE", &self.file_name.patch_manifest_file),
             ("VERSION_FILE", &self.file_name.version_file),
+            (
+                "LAUNCHER_MANIFEST_FILE",
+                &self.file_name.launcher_manifest_file,
+            ),
         ];
 
         for (key, name) in names {
@@ -167,6 +181,8 @@ impl AppConfig {
                     .with_context(|| format!("Invalid resource regex pattern: '{pattern}'"))?;
             }
         }
+
+        self.launcher.patterns()?;
 
         Ok(())
     }
@@ -188,6 +204,7 @@ impl Default for AppConfig {
             request: RequestConfig::default(),
             resource_registry: ResourceRegistryConfig::default(),
             uncensor: UncensorConfig::default(),
+            launcher: LauncherConfig::default(),
             servers,
             feature_flags: FeatureFlags::default(),
         }
@@ -207,10 +224,18 @@ mod tests {
     #[test]
     fn config_roundtrips_through_toml() {
         let config: AppConfig = AppConfig::default();
-        let toml_str: String = config.to_toml_with_comments();
+        let toml_str: String = config.to_toml(true);
         let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
 
         assert_eq!(parsed.default_region, config.default_region);
         assert_eq!(parsed.servers.len(), config.servers.len());
+    }
+
+    #[test]
+    fn comments_are_only_written_when_enabled() {
+        let config: AppConfig = AppConfig::default();
+
+        assert!(config.to_toml(true).contains("# 应用程序配置文件"));
+        assert!(!config.to_toml(false).contains("# 应用程序配置文件"));
     }
 }

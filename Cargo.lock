@@ -2302,7 +2302,7 @@ dependencies = [
 
 [[package]]
 name = "ss-resource-fetcher"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "aes",
  "anyhow",
@@ -2314,6 +2314,7 @@ dependencies = [
  "indexmap",
  "log",
  "logger",
+ "md-5",
  "network-manager",
  "phf",
  "prost",

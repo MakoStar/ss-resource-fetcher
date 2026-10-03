@@ -1,3 +1,7 @@
+pub const SEPARATOR: &str = concat!(
+    "--------", "--------", "--------", "--------", "--------", "--------", "--------", "--------"
+);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DownloadProgress {
     /// 当前序号
@@ -24,7 +28,13 @@ impl std::fmt::Display for DownloadProgress {
 
 #[cfg(test)]
 mod tests {
-    use super::DownloadProgress;
+    use super::{DownloadProgress, SEPARATOR};
+
+    #[test]
+    fn separator_is_sixty_four_dashes() {
+        assert_eq!(SEPARATOR.len(), 64);
+        assert!(SEPARATOR.bytes().all(|byte| byte == b'-'));
+    }
 
     #[test]
     fn formats_count_prefix() {

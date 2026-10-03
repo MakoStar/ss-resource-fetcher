@@ -3,25 +3,46 @@ use std::path::Path;
 use file_utils::FileHandler;
 use serde_json::{Map, Value};
 
-use crate::config::AppConfig;
-use crate::error::Result;
+use crate::config::{AppConfig, default_region_filtered};
+use crate::error::{AppError, Result};
 use crate::extractor::{GameVersionExtractor, PatchManifestExtractor, PatchVersionExtractor};
 use crate::manifest::{ManifestDecoder, ManifestDecryptor};
-use crate::model::{RegionBytes, RegionFileDiffs, RegionResources, UncensorSource};
-use crate::network::{ManifestFetcher, ResourcesFetcher, UncensorPatchFetcher};
+use crate::model::{
+    LauncherFilter, LauncherSelect, LauncherSource, Region, RegionBytes, RegionFileDiffs,
+    RegionResources, UncensorSource,
+};
+use crate::network::{LauncherFetcher, ManifestFetcher, ResourcesFetcher, UncensorPatchFetcher};
 use crate::patch::PatchMerger;
 use crate::storage::RegionFileStore;
 
 #[derive(Debug, Clone, Default)]
-pub struct PipelineOptions {
-    /// 是否生成主清单记录
-    pub generate_manifest_record: bool,
+pub enum TaskOptions {
+    /// 常规资源流水线
+    #[default]
+    Pipeline,
+    /// 只生成清单记录
+    Record,
+    /// 只下载反和谐资源包
+    Uncensor {
+        /// 反和谐资源包的下载来源
+        source: UncensorSource,
+    },
+    /// 只下载 launcher 资源包
+    Launcher(LauncherTask),
+}
 
-    /// 是否只下载反和谐资源包
-    pub download_uncensor_pack: bool,
-
-    /// 反和谐资源包的下载来源
-    pub uncensor_source: UncensorSource,
+#[derive(Debug, Clone, Default)]
+pub struct LauncherTask {
+    /// 下载区域 未指定则为全部区域
+    pub source: LauncherSource,
+    /// 是否下载清单里的全部资源
+    pub all: bool,
+    /// 是否启用正则筛选
+    pub regex: Option<bool>,
+    /// 命令行传入的正则与文件列表
+    pub filter: LauncherFilter,
+    /// 是否按清单里的 path 建目录保存
+    pub keep: bool,
 }
 
 pub struct ResourcePipeline {
@@ -57,22 +78,23 @@ impl ResourcePipeline {
         }
     }
 
-    pub async fn run(&self, options: &PipelineOptions) -> Result<()> {
-        if options.download_uncensor_pack {
-            if options.generate_manifest_record {
-                logger::tips!(
-                    "--download-uncensor-pack is exclusive: ignoring --generate-manifest-record."
-                );
-            }
-            return self.download_uncensor_pack(options).await;
-        }
-
-        if options.uncensor_source != UncensorSource::ConfigRegion {
+    pub async fn run(&self, task: &TaskOptions) -> Result<()> {
+        if default_region_filtered() {
             logger::tips!(
-                "uncensor options (--uncensor-region / --uncensor-default-url / --uncensor-custom-files) only work together with --download-uncensor-pack."
+                "IS_USE_DEFAULT_REGION is enabled, only '{}' region is kept !!!",
+                self.config.default_region
             );
         }
 
+        match task {
+            TaskOptions::Uncensor { source } => self.download_uncensor_pack(source).await,
+            TaskOptions::Launcher(task) => self.download_launcher_pack(task).await,
+            TaskOptions::Pipeline => self.run_pipeline(false).await,
+            TaskOptions::Record => self.run_pipeline(true).await,
+        }
+    }
+
+    async fn run_pipeline(&self, record: bool) -> Result<()> {
         let flags = &self.config.feature_flags;
 
         let raw = self.fetch_manifests().await?;
@@ -83,7 +105,7 @@ impl ResourcePipeline {
             logger::tips!("FEATURE: IS_EXTRACT_PATCH_MANIFEST IS DISABLED.");
             return Ok(());
         }
-        let patches = self.extract_patch_manifests(&decoded, options)?;
+        let patches = self.extract_patch_manifests(&decoded, record)?;
 
         if !flags.is_download_resource {
             logger::tips!("FEATURE: IS_DOWNLOAD_RESOURCE IS DISABLED.");
@@ -91,19 +113,72 @@ impl ResourcePipeline {
         }
         self.download_resources(&patches).await?;
 
-        self.merge_patches(options)?;
+        self.merge_patches(record)?;
 
         if flags.is_save_version_file {
-            self.save_version_file(&patches, options)?;
+            self.save_version_file(&patches, record)?;
         }
 
         Ok(())
     }
 
-    async fn download_uncensor_pack(&self, options: &PipelineOptions) -> Result<()> {
-        UncensorPatchFetcher::from_app_config(self.config, &options.uncensor_source)?
+    async fn download_uncensor_pack(&self, source: &UncensorSource) -> Result<()> {
+        UncensorPatchFetcher::from_app_config(self.config, source)?
             .fetch_all()
             .await
+    }
+
+    async fn download_launcher_pack(&self, task: &LauncherTask) -> Result<()> {
+        self.report_launcher_regions(&task.source)?;
+
+        let select: LauncherSelect = LauncherSelect::resolve(
+            task.all,
+            task.regex,
+            task.filter.clone(),
+            LauncherFilter {
+                patterns: self.config.launcher.patterns.clone(),
+                files: self.config.launcher.files.clone(),
+            },
+        )?;
+
+        logger::tips!("launcher select mode: {}", select.label());
+
+        LauncherFetcher::from_app_config(self.config)?
+            .with_keep_path(task.keep)
+            .with_select(&select)?
+            .fetch_all(&task.source)
+            .await
+    }
+
+    fn report_launcher_regions(&self, source: &LauncherSource) -> Result<()> {
+        let configured: Vec<&str> = self.config.launcher.region_names().collect();
+        let in_config = |region: &Region| configured.contains(&region.as_str());
+
+        match source {
+            LauncherSource::Region(region) if in_config(region) => {
+                logger::tips!("launcher region: {region}");
+                Ok(())
+            }
+            LauncherSource::Region(region) if self.config.launcher.has_region(region.as_str()) => {
+                logger::tips!(
+                    "launcher region: {region} (built-in endpoint, kept: {})",
+                    configured.join(", ")
+                );
+                Ok(())
+            }
+            LauncherSource::Region(region) => Err(AppError::message(format!(
+                "launcher region '{region}' has no endpoint. Available: {}",
+                self.config
+                    .launcher
+                    .builtin_region_names()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))),
+            LauncherSource::AllRegions => {
+                logger::tips!("launcher regions: {} (-r to narrow)", configured.join(", "));
+                Ok(())
+            }
+        }
     }
 
     async fn fetch_manifests(&self) -> Result<RegionBytes> {
@@ -157,14 +232,14 @@ impl ResourcePipeline {
     fn extract_patch_manifests(
         &self,
         decoded: &RegionFileDiffs,
-        options: &PipelineOptions,
+        record: bool,
     ) -> Result<RegionResources> {
         let extractor = PatchManifestExtractor::from_app_config(self.config);
         let save = self.config.feature_flags.is_save_patch_manifest;
         let mut patches = RegionResources::new();
 
         for (region, diffs) in decoded {
-            let entries = if options.generate_manifest_record {
+            let entries = if record {
                 extractor.extract_root_one(region, diffs)
             } else {
                 extractor.extract_one(region, diffs)?
@@ -185,31 +260,27 @@ impl ResourcePipeline {
             .await
     }
 
-    fn merge_patches(&self, options: &PipelineOptions) -> Result<()> {
+    fn merge_patches(&self, record: bool) -> Result<()> {
         if !self.config.feature_flags.is_merge_patch {
             logger::tips!("FEATURE: IS_MERGE_PATCH IS DISABLED.");
             return Ok(());
         }
 
-        if options.generate_manifest_record {
-            logger::tips!("SKIP MERGE: --generate-manifest-record only dumps the manifest record.");
+        if record {
+            logger::tips!("SKIP MERGE: record only dumps the manifest record.");
             return Ok(());
         }
 
         PatchMerger::from_app_config(self.config).apply_all()
     }
 
-    fn save_version_file(
-        &self,
-        patches: &RegionResources,
-        options: &PipelineOptions,
-    ) -> Result<()> {
+    fn save_version_file(&self, patches: &RegionResources, record: bool) -> Result<()> {
         let flags = &self.config.feature_flags;
 
         let patch_version_json: Value =
             if flags.is_extract_patch_version && !flags.is_use_resource_regex {
                 let extractor = PatchVersionExtractor::from_app_config(self.config, patches);
-                if options.generate_manifest_record {
+                if record {
                     extractor.extract_mani(&self.config.file_name.update_root_mani_file)?
                 } else {
                     extractor.extract(self.config.resource_registry.unpack_set())?

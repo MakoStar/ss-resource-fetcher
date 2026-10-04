@@ -76,10 +76,19 @@ impl RegionTarget {
             )));
         }
 
+        let count: usize = entries.len();
         let mut resources = RegionResources::new();
         resources.insert(self.region.clone(), entries);
 
-        self.resources_fetcher.fetch_and_save(&resources).await
+        self.resources_fetcher.fetch_and_save(&resources).await?;
+
+        logger::tips!(
+            "[{}] uncensor pack done, {} file(s) downloaded",
+            self.region,
+            count
+        );
+
+        Ok(())
     }
 
     async fn match_source_resources(&self, wanted: &IndexSet<String>) -> Result<ResourceEntries> {

@@ -1,7 +1,10 @@
 use std::collections::HashSet;
 
 const HEADER_TITLE: &str = "应用程序配置文件";
-const HEADER_NOTES: &[&str] = &["修改后重启应用即可生效"];
+const HEADER_NOTES: &[&str] = &[
+    "修改后重启应用即可生效",
+    "也可以用 -s/--set 段.键=值 临时覆盖，不改这个文件",
+];
 
 const SECTION_COMMENTS: &[(&str, &str, &[&str])] = &[
     ("[SERVER_ROUTE]", "服务器路由配置", &[]),
@@ -29,11 +32,35 @@ const SECTION_COMMENTS: &[(&str, &str, &[&str])] = &[
         "[UNCENSOR]",
         "Uncensor 资源包配置",
         &[
-            "命令行加 -u / --download-uncensor-pack 才会执行（独占任务，不跑常规流水线）",
+            "命令行用 uncensor 子命令执行（独占任务，不跑常规流水线）",
             "URL: 第三方 Uncensor 清单服务器",
             "SOURCE_REGION: 实际下载资源所用的官方区域",
-            "-u -r/--uncensor-region <区域>: 覆盖 SOURCE_REGION，走官方清单匹配下载",
-            "-u -U/--uncensor-default-url: 直接用 URL 下的资源下载，输出到 UNCENSOR_DEFAULT_OUTPUT_DIR",
+            "uncensor -r/--region <区域>: 覆盖 SOURCE_REGION，走官方清单匹配下载",
+            "uncensor -d/--default: 直接用 URL 下的资源下载，输出到 UNCENSOR_DEFAULT_OUTPUT_DIR",
+            "uncensor -c/--custom -p/--path <JSON>: 用自定义文件列表下载",
+        ],
+    ),
+    (
+        "[LAUNCHER]",
+        "Launcher 资源包配置",
+        &[
+            "命令行用 launcher 子命令执行（独占任务，不跑常规流水线）",
+            "下载范围必须显式指定：全部 / 正则 / 文件列表，什么都不给会直接报错",
+            "launcher -r/--region <区域>: 只下载指定区域，不传则下载 SERVERS 里的全部区域",
+            "launcher -a/--all: 下载清单里的全部资源，不需要配 PATTERNS",
+            "launcher -p/--pattern <正则>: 按正则筛选（按清单里的文件名匹配），可重复传入",
+            "launcher -f/--file <文件名>: 只下载列出的文件，可重复传入，带目录时按 path 匹配",
+            "launcher -e/--regex: 显式启用正则，用这里的 PATTERNS；-e false 则用 FILES",
+            "launcher -k/--keep: 按清单里的 path 建目录保存，不再摊平成文件名",
+            "PATTERNS: -e/--regex 启用时的正则",
+            "FILES: -e false 时下载的文件列表",
+        ],
+    ),
+    (
+        "[LAUNCHER.SERVERS.",
+        "Launcher 端点配置",
+        &[
+            "区域名 = { TAG = \"游戏标识\", SALT = \"签名盐值\", API_URL = \"配置接口\", PKG_URL = \"资源包地址\" }",
         ],
     ),
     (
@@ -59,7 +86,6 @@ const KEY_COMMENTS: &[(&str, &str)] = &[(
     "# 默认区域: 启用 IS_USE_DEFAULT_REGION 时生效",
 )];
 
-#[allow(dead_code)]
 pub fn apply(content: &str) -> String {
     let mut out: Vec<String> = Vec::new();
 
@@ -90,7 +116,6 @@ pub fn apply(content: &str) -> String {
     result
 }
 
-#[allow(dead_code)]
 fn section_key(line: &str) -> Option<&str> {
     if !line.starts_with('[') {
         return None;
@@ -98,6 +123,10 @@ fn section_key(line: &str) -> Option<&str> {
 
     let end = line.find(']')?;
     let raw = &line[..=end];
+
+    if raw.starts_with("[LAUNCHER.SERVERS.") {
+        return Some("[LAUNCHER.SERVERS.");
+    }
 
     if raw.starts_with("[SERVERS.") {
         return Some("[SERVERS.");
@@ -110,7 +139,6 @@ fn section_key(line: &str) -> Option<&str> {
     Some(raw)
 }
 
-#[allow(dead_code)]
 fn key_comment(line: &str) -> Option<&'static str> {
     KEY_COMMENTS
         .iter()
@@ -118,7 +146,6 @@ fn key_comment(line: &str) -> Option<&'static str> {
         .map(|(_, note)| *note)
 }
 
-#[allow(dead_code)]
 fn comment_block(title: &str, notes: &[&str]) -> String {
     let bar: String = "=".repeat(60);
     let mut block = format!("# {bar}\n# {title}\n");

@@ -40,7 +40,7 @@ impl UncensorSource {
     ) -> Result<Self> {
         if custom_files {
             let Some(path) = custom_files_path else {
-                anyhow::bail!("--uncensor-custom-files requires --uncensor-custom-files-path");
+                anyhow::bail!("uncensor --custom requires --path");
             };
             return Ok(Self::CustomFiles {
                 path,

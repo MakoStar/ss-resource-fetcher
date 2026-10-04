@@ -7,7 +7,7 @@ use network_manager::HttpFetcher;
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::manifest::ManiResource;
-use crate::model::DownloadProgress;
+use crate::model::{DownloadProgress, SEPARATOR};
 
 pub struct DefaultUrlTarget {
     /// 资源基础地址
@@ -47,9 +47,11 @@ impl DefaultUrlTarget {
             self.download_one(name, resource, &progress).await?;
 
             if index + 1 < total {
-                log::debug!("{}", "-".repeat(64));
+                log::debug!("{SEPARATOR}");
             }
         }
+
+        logger::tips!("uncensor pack done, {total} file(s) downloaded");
 
         Ok(())
     }
@@ -102,7 +104,7 @@ impl DefaultUrlTarget {
         }
 
         if FileHandler::verify_md5(save_path, &resource.hash).is_ok() {
-            logger::step!("{prefix} SKIP (cached): {}", save_path.display());
+            logger::step!("{prefix} SKIP (cached): {name}");
             true
         } else {
             log::warn!("{prefix} {name} MD5 mismatch, will re-download");

@@ -14,11 +14,13 @@ mod uncensor;
 
 use clap::Parser;
 
-use crate::cli::Args;
-use crate::config::AppConfig;
+use crate::cli::{Args, Task};
+use crate::config::{
+    AppConfig, ConfigOverride, set_config_comments, set_config_init, set_config_overrides,
+};
 use crate::error::Result;
-use crate::model::UncensorSource;
-use crate::pipeline::{PipelineOptions, ResourcePipeline};
+use crate::model::{LauncherFilter, LauncherSource, UncensorSource};
+use crate::pipeline::{LauncherTask, ResourcePipeline, TaskOptions};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,16 +29,44 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     print_banner!();
 
-    let options = PipelineOptions {
-        generate_manifest_record: args.generate_manifest_record,
-        download_uncensor_pack: args.download_uncensor_pack,
-        uncensor_source: UncensorSource::resolve(
-            args.uncensor_region,
-            args.uncensor_default_url,
-            args.uncensor_custom_files,
-            args.uncensor_custom_files_path,
-        )?,
+    set_config_comments(args.comments);
+    set_config_init(args.init);
+
+    let mut overrides: Vec<ConfigOverride> = Vec::with_capacity(args.set.len());
+    for raw in &args.set {
+        overrides.push(ConfigOverride::parse(raw)?);
+    }
+    set_config_overrides(overrides);
+
+    let task: TaskOptions = match args.task {
+        Some(Task::Uncensor {
+            region,
+            default,
+            custom,
+            path,
+        }) => TaskOptions::Uncensor {
+            source: UncensorSource::resolve(region, default, custom, path)?,
+        },
+        Some(Task::Launcher {
+            region,
+            all,
+            pattern,
+            file,
+            regex,
+            keep,
+        }) => TaskOptions::Launcher(LauncherTask {
+            source: LauncherSource::resolve(region),
+            all,
+            regex,
+            filter: LauncherFilter {
+                patterns: pattern,
+                files: file,
+            },
+            keep,
+        }),
+        Some(Task::Run { record }) if record => TaskOptions::Record,
+        _ => TaskOptions::Pipeline,
     };
 
-    ResourcePipeline::new(AppConfig::get()).run(&options).await
+    ResourcePipeline::new(AppConfig::get()?).run(&task).await
 }

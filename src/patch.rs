@@ -11,7 +11,7 @@ use qbsdiff::Bspatch;
 use crate::config::{AppConfig, ResourceRegistryConfig};
 use crate::error::{AppError, Result};
 use crate::manifest::ManiReader;
-use crate::model::{Region, ResourceEntries};
+use crate::model::{Region, ResourceEntries, SEPARATOR};
 
 pub struct PatchMerger {
     /// 区域列表
@@ -77,7 +77,15 @@ impl PatchMerger {
     }
 
     pub fn apply_for_region(&self, region: &Region) -> Result<()> {
-        for file_name in self.unpack_targets(region)? {
+        let targets: Vec<String> = self.unpack_targets(region)?;
+
+        for (index, file_name) in targets.into_iter().enumerate() {
+            if index != 0 {
+                log::debug!("{SEPARATOR}");
+            }
+
+            logger::step!("[{region}] {file_name}");
+
             let patches = self.patches_for(region, &file_name)?;
 
             if patches.is_empty() {
@@ -85,7 +93,6 @@ impl PatchMerger {
                 continue;
             }
 
-            logger::step!("[{region}] {file_name}");
             self.merge_patch(region, &file_name, &patches)
                 .with_context(|| {
                     format!("Failed to apply patch for '{file_name}' in region '{region}'")
@@ -170,7 +177,7 @@ impl PatchMerger {
         let expected_hash = self.expected_resource_hash(region, file_name, patch_name)?;
 
         if step != 0 {
-            log::debug!("{}", "-".repeat(64));
+            log::debug!("{SEPARATOR}");
         }
 
         let patch_hash = FileHandler::compute_md5(&patch_path).with_context(|| {

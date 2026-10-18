@@ -24,8 +24,8 @@ pub struct PatchVersionExtractor<'a> {
 impl<'a> PatchVersionExtractor<'a> {
     pub fn from_app_config(app: &AppConfig, all_region_patches: &'a RegionResources) -> Self {
         Self {
-            patch_tag_prefix: app.file_name.update_resource_patch_tag_prefix.clone(),
-            patch_tag_suffix: app.file_name.update_resource_patch_tag_suffix.clone(),
+            patch_tag_prefix: app.updatetag.patch_prefix.clone(),
+            patch_tag_suffix: app.updatetag.u_suffix.clone(),
             all_region_patches,
         }
     }
@@ -35,9 +35,9 @@ impl<'a> PatchVersionExtractor<'a> {
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
     {
-        logger::head!("EXTRACT PATCH VERSION");
+        logger::head!("Extract patch version");
 
-        let suffixes: Vec<String> = file_suffixes
+        let suffixes: Vec<_> = file_suffixes
             .into_iter()
             .map(|suffix| suffix.as_ref().to_string())
             .collect();
@@ -64,7 +64,7 @@ impl<'a> PatchVersionExtractor<'a> {
     }
 
     pub fn extract_mani(&self, filename: &str) -> Result<Value> {
-        logger::head!("EXTRACT PATCH VERSION");
+        logger::head!("Extract patch version");
 
         let mut result = Map::with_capacity(self.all_region_patches.len());
 
@@ -131,7 +131,7 @@ impl<'a> PatchVersionExtractor<'a> {
             };
         }
 
-        log::debug!(
+        log::info!(
             "[{region:<2}]  {file_suffix:<12}  num={:<4}  ver={}",
             highest.num,
             highest.version

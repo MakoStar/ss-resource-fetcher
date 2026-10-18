@@ -18,6 +18,8 @@ pub struct GameVersionExtractor {
     patch_version_key: String,
     /// 补丁清单目录
     patch_metadata_dir: PathBuf,
+    /// 平台子目录
+    platform: String,
     /// 根清单文件名
     root_manifest_filename: String,
     /// 区域列表
@@ -27,12 +29,13 @@ pub struct GameVersionExtractor {
 impl GameVersionExtractor {
     pub fn from_app_config(app: &AppConfig) -> Self {
         Self {
-            default_version_key: app.extractor.default_version_key.clone(),
-            client_version_key: app.extractor.client_version_key.clone(),
-            game_version_key: app.extractor.game_version_key.clone(),
-            patch_version_key: app.extractor.patch_version_key.clone(),
-            patch_metadata_dir: PathBuf::from(&app.file_path.patch_output_dir),
-            root_manifest_filename: app.file_name.update_root_mani_file.clone(),
+            default_version_key: app.task.client.extract_key.default.clone(),
+            client_version_key: app.task.client.extract_key.client.clone(),
+            game_version_key: app.task.client.extract_key.game.clone(),
+            patch_version_key: app.task.client.extract_key.patch.clone(),
+            patch_metadata_dir: PathBuf::from(&app.task.client.filepath.patch),
+            platform: app.global.default_platform.clone(),
+            root_manifest_filename: app.task.client.filename.root_mani.clone(),
             regions: app.regions(),
         }
     }
@@ -40,11 +43,12 @@ impl GameVersionExtractor {
     fn manifest_patch_path(&self, region: &Region) -> PathBuf {
         self.patch_metadata_dir
             .join(region.as_str())
+            .join(&self.platform)
             .join(&self.root_manifest_filename)
     }
 
     pub fn extract_regions(&self) -> Result<Map<String, Value>> {
-        logger::head!("EXTRACT CLIENT VERSION");
+        logger::head!("Extract client version");
 
         let mut result = Map::with_capacity(self.regions.len());
 

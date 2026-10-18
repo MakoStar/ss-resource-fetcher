@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use file_utils::FileHandler;
 use indexmap::IndexMap;
 use network_manager::HttpFetcher;
@@ -5,7 +7,8 @@ use network_manager::HttpFetcher;
 use crate::config::AppConfig;
 use crate::error::Result;
 use crate::manifest::{ManiReader, ManiResource};
-use crate::model::UncensorSource;
+use crate::model::{Region, UncensorSource};
+use crate::storage::push_platform;
 use crate::uncensor::UncensorTarget;
 
 pub struct UncensorPatchFetcher {
@@ -20,13 +23,27 @@ pub struct UncensorPatchFetcher {
 }
 
 impl UncensorPatchFetcher {
-    pub fn from_app_config(app: &AppConfig, source: &UncensorSource) -> Result<Self> {
+    pub fn from_app_config(
+        app: &AppConfig,
+        source: &UncensorSource,
+        save_manifest: bool,
+    ) -> Result<Self> {
         let requester = HttpFetcher::new(&app.build_fetcher_config());
-        let target = UncensorTarget::from_app_config(app, source, &requester)?;
+        let target = UncensorTarget::from_app_config(app, source, &requester, save_manifest)?;
+
+        let region = target
+            .region()
+            .map(Region::as_str)
+            .unwrap_or(&app.task.uncensor.source_region);
+        let manifest_output_path = push_platform(
+            PathBuf::from(&app.task.uncensor.filepath.metadata).join(region),
+            &app.global.default_platform,
+        )
+        .join(app.task.uncensor.manifest_file_name());
 
         Ok(Self {
-            manifest_url: app.uncensor.manifest_url(),
-            manifest_output_path: target.output_dir().join(app.uncensor.manifest_file_name()),
+            manifest_url: app.task.uncensor.manifest_url(target.region()),
+            manifest_output_path,
             requester,
             target,
         })
@@ -41,7 +58,7 @@ impl UncensorPatchFetcher {
     }
 
     async fn fetch_from_manifest(&self) -> Result<()> {
-        logger::head!("FETCH UNCENSOR MANIFEST");
+        logger::head!("Fetch uncensor manifest");
 
         let wanted = self.download_resource_entries().await?;
         if wanted.is_empty() {
@@ -54,8 +71,10 @@ impl UncensorPatchFetcher {
     }
 
     async fn download_resource_entries(&self) -> Result<IndexMap<String, ManiResource>> {
+        logger::step!("fetch manifest");
+
         let url = &self.manifest_url;
-        log::info!("downloading uncensor manifest: {url}");
+        log::info!("uncensor manifest url: {url}");
 
         let bytes = self
             .requester
@@ -65,13 +84,13 @@ impl UncensorPatchFetcher {
 
         FileHandler::write_bytes(&bytes, &self.manifest_output_path)?;
         log::info!(
-            "saved uncensor manifest: {} ({:.2}KB)",
+            "saved path: {} ({:.2}KB)",
             self.manifest_output_path.display(),
             bytes.len() as f64 / 1024.0
         );
 
         let reader = ManiReader::new(&self.manifest_output_path, None)?;
-        let entries: IndexMap<String, ManiResource> = reader
+        let entries = reader
             .resources()
             .into_iter()
             .map(|res| (res.file.clone(), res.clone()))

@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use indexmap::IndexMap;
 use network_manager::FetcherConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct RequestConfig {
+pub struct NetworkConfig {
     /// 是否验证 TLS 证书
     #[serde(rename = "VERIFY_TLS")]
     pub verify_tls: bool,
@@ -36,30 +37,13 @@ pub struct RequestConfig {
     pub max_retry_delay_secs: u64,
 
     /// HTTP 额外请求头
-    #[serde(rename = "EXTRA_HEADERS")]
-    pub extra_headers: HashMap<String, String>,
+    #[serde(rename = "HEADERS")]
+    pub headers: IndexMap<String, String>,
 }
 
-impl RequestConfig {
-    pub fn build_fetcher_config(&self) -> FetcherConfig {
-        FetcherConfig::builder()
-            .timeout(self.timeout_secs)
-            .max_retries(self.total_retries)
-            .backoff_base_ms(self.backoff_base_ms)
-            .retry_bounds(
-                Duration::from_millis(self.min_retry_delay_ms),
-                Duration::from_secs(self.max_retry_delay_secs),
-            )
-            .verify_tls(self.verify_tls)
-            .pool_max_idle(self.pool_max_idle)
-            .headers(self.extra_headers.clone())
-            .build()
-    }
-}
-
-impl Default for RequestConfig {
+impl Default for NetworkConfig {
     fn default() -> Self {
-        let mut headers: HashMap<String, String> = HashMap::new();
+        let mut headers = IndexMap::new();
         headers.insert("Accept-Encoding".into(), "identity".into());
         headers.insert("X-Unity-Version".into(), "2022.3.62f2".into());
         headers.insert(
@@ -74,7 +58,30 @@ impl Default for RequestConfig {
             pool_max_idle: 50,
             min_retry_delay_ms: 500,
             max_retry_delay_secs: 30,
-            extra_headers: headers,
+            headers,
         }
+    }
+}
+
+impl NetworkConfig {
+    pub fn build_fetcher_config(&self) -> FetcherConfig {
+        let headers: HashMap<_, _> = self
+            .headers
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect();
+
+        FetcherConfig::builder()
+            .timeout(self.timeout_secs)
+            .max_retries(self.total_retries)
+            .backoff_base_ms(self.backoff_base_ms)
+            .retry_bounds(
+                Duration::from_millis(self.min_retry_delay_ms),
+                Duration::from_secs(self.max_retry_delay_secs),
+            )
+            .verify_tls(self.verify_tls)
+            .pool_max_idle(self.pool_max_idle)
+            .headers(headers)
+            .build()
     }
 }

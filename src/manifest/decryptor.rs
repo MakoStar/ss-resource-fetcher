@@ -28,6 +28,8 @@ impl ManifestDecryptor {
 
     pub fn from_app_config(app: &AppConfig) -> Self {
         let keys = app
+            .task
+            .client
             .servers
             .iter()
             .map(|(name, server)| (Region::new(name), server.key.clone()))
@@ -37,8 +39,6 @@ impl ManifestDecryptor {
     }
 
     pub fn decrypt_one(&self, region: &Region, data: &[u8]) -> Result<Vec<u8>> {
-        logger::head!("DECRYPT MANIFEST {region}");
-
         let key = self
             .keys
             .get(region)
@@ -143,8 +143,11 @@ impl ManifestDecryptor {
             return;
         }
 
-        let preview_len = std::cmp::min(32, data.len());
-        log::info!("[{region}] hex={}", hex::encode(&data[..preview_len]));
+        let preview_len = std::cmp::min(8, data.len());
+        let hex = hex::encode(&data[..preview_len]);
+        let tail = if data.len() > preview_len { ".." } else { "" };
+
+        log::info!("[{region}] hex={hex}{tail} len={}", data.len());
     }
 }
 

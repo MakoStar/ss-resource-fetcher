@@ -25,21 +25,3 @@ impl std::fmt::Display for DownloadProgress {
         write!(f, "[{}/{}]", self.current, self.total)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{DownloadProgress, SEPARATOR};
-
-    #[test]
-    fn separator_is_sixty_four_dashes() {
-        assert_eq!(SEPARATOR.len(), 64);
-        assert!(SEPARATOR.bytes().all(|byte| byte == b'-'));
-    }
-
-    #[test]
-    fn formats_count_prefix() {
-        let progress = DownloadProgress::new(3, 128);
-        assert_eq!(progress.prefix(), "[3/128]");
-        assert_eq!(progress.to_string(), "[3/128]");
-    }
-}

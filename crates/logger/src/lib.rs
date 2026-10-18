@@ -2,6 +2,9 @@ use std::fmt::Arguments;
 use std::io::Result;
 
 #[doc(hidden)]
+pub use log;
+
+#[doc(hidden)]
 pub use unicode_width;
 
 use chrono::Local;
@@ -35,10 +38,10 @@ fn level_tag(level: Level) -> &'static str {
 #[allow(unused)]
 fn format_record(buf: &mut Formatter, record: &Record<'_>) -> Result<()> {
     let ts: DelayedFormat<StrftimeItems<'_>> = Local::now().format("%Y-%m-%d %H:%M:%S");
-    let style: Style = level_style(record.level());
+    let style = level_style(record.level());
     let tag: &str = level_tag(record.level());
 
-    let line: String = format!(
+    let line = format!(
         "[{}][{}] - {}",
         ts.to_string().style(TS_STYLE),
         tag.style(style),
@@ -52,8 +55,13 @@ fn format_record(buf: &mut Formatter, record: &Record<'_>) -> Result<()> {
     Ok(())
 }
 
+#[doc(hidden)]
+pub fn allows(level: LevelFilter) -> bool {
+    level != LevelFilter::Off && level <= log::max_level()
+}
+
 pub fn init(default_level: LevelFilter) {
-    let mut builder: Builder = Builder::new();
+    let mut builder = Builder::new();
 
     if let Ok(rust_log) = std::env::var("RUST_LOG") {
         builder.parse_filters(&rust_log);
@@ -71,45 +79,44 @@ pub struct CustomTag {
     pub bold: bool,
 }
 
-// 成功 - rgb(102, 255, 102)
 pub const TAG_SUCC: CustomTag = CustomTag {
     name: "SUCC",
     color: Style::new().truecolor(102, 255, 102),
     bold: false,
 };
 
-// 失败 - rgb(255, 153, 102)
 pub const TAG_FAIL: CustomTag = CustomTag {
     name: "FAIL",
     color: Style::new().truecolor(255, 153, 102),
     bold: false,
 };
 
-// 步骤 - rgb(153, 255, 255)
+pub const TAG_TIER: CustomTag = CustomTag {
+    name: "TIER",
+    color: Style::new().truecolor(51, 204, 255),
+    bold: true,
+};
+
 pub const TAG_STEP: CustomTag = CustomTag {
     name: "STEP",
     color: Style::new().truecolor(153, 255, 255),
     bold: false,
 };
 
-// 提示 - rgb(255, 102, 255)
 pub const TAG_TIPS: CustomTag = CustomTag {
     name: "TIPS",
     color: Style::new().truecolor(255, 102, 255),
     bold: false,
 };
 
-// 节点 - rgb(102, 102, 255)
 pub const TAG_NODE: CustomTag = CustomTag {
     name: "NODE",
     color: Style::new().truecolor(102, 102, 255),
     bold: false,
 };
 
-// 测试 - rgb(204, 204, 204)
 pub const TAG_TEST: CustomTag = CustomTag {
     name: "TEST",
-    // color: 250,
     color: Style::new().truecolor(204, 204, 204),
     bold: true,
 };
@@ -117,12 +124,12 @@ pub const TAG_TEST: CustomTag = CustomTag {
 #[doc(hidden)]
 pub fn custom_log(tag: &CustomTag, msg: Arguments) {
     let ts: DelayedFormat<StrftimeItems<'_>> = Local::now().format("%Y-%m-%d %H:%M:%S");
-    let mut style: Style = tag.color;
+    let mut style = tag.color;
     if tag.bold {
         style = style.bold();
     }
 
-    let line: String = format!(
+    let line = format!(
         "[{}][{}] - {}",
         ts.to_string().style(TS_STYLE),
         tag.name.style(style),
@@ -143,7 +150,7 @@ pub fn set_env_color() {
 macro_rules! init_logger {
     () => {
         $crate::set_env_color();
-        $crate::init(log::LevelFilter::Debug);
+        $crate::init(log::LevelFilter::Info);
     };
     ($level:expr) => {
         $crate::set_env_color();
@@ -154,73 +161,84 @@ macro_rules! init_logger {
 #[macro_export]
 macro_rules! head {
     ($fmt:expr $(, $args:expr)* $(,)?) => {{
-        let msg = format!($fmt $(, $args)*);
-        let total_width: usize = 64;
-        let msg_width = $crate::unicode_width::UnicodeWidthStr::width(msg.as_str());
-        let overhead = 2usize;
-        let pad = total_width.saturating_sub(msg_width + overhead).max(2);
-        let left = pad / 2;
-        let right = pad - left;
-        $crate::node!("{} {} {}", "═".repeat(left), msg, "═".repeat(right));
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            let msg = format!($fmt $(, $args)*);
+            let total_width = 64usize;
+            let msg_width = $crate::unicode_width::UnicodeWidthStr::width(msg.as_str());
+            let overhead = 2usize;
+            let pad = total_width.saturating_sub(msg_width + overhead).max(2);
+            let left = pad / 2;
+            let right = pad - left;
+            $crate::node!("{} {} {}", "═".repeat(left), msg, "═".repeat(right));
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! tier {
+    ($fmt:expr $(, $args:expr)* $(,)?) => {{
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            let msg = format!($fmt $(, $args)*);
+            let width = $crate::unicode_width::UnicodeWidthStr::width(msg.as_str());
+            let fill = 60usize.saturating_sub(width).max(2);
+            $crate::custom_log(
+                &$crate::TAG_TIER,
+                format_args!("── {} {}", msg, "─".repeat(fill)),
+            );
+        }
     }};
 }
 
 #[macro_export]
 macro_rules! succ {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_SUCC,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            $crate::custom_log(&$crate::TAG_SUCC, format_args!($($arg)*))
+        }
     };
 }
 
 #[macro_export]
 macro_rules! fail {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_FAIL,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Error) {
+            $crate::custom_log(&$crate::TAG_FAIL, format_args!($($arg)*))
+        }
     };
 }
 
 #[macro_export]
 macro_rules! step {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_STEP,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            $crate::custom_log(&$crate::TAG_STEP, format_args!($($arg)*))
+        }
     };
 }
 
 #[macro_export]
 macro_rules! tips {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_TIPS,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            $crate::custom_log(&$crate::TAG_TIPS, format_args!($($arg)*))
+        }
     };
 }
 
 #[macro_export]
 macro_rules! node {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_NODE,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Info) {
+            $crate::custom_log(&$crate::TAG_NODE, format_args!($($arg)*))
+        }
     };
 }
 
 #[macro_export]
 macro_rules! test {
     ($($arg:tt)*) => {
-        $crate::custom_log(
-            &$crate::TAG_TEST,
-            format_args!($($arg)*)
-        )
+        if $crate::allows($crate::log::LevelFilter::Trace) {
+            $crate::custom_log(&$crate::TAG_TEST, format_args!($($arg)*))
+        }
     };
 }

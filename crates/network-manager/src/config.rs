@@ -97,3 +97,77 @@ impl FetcherConfigBuilder {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn defaults_match_documented_values() {
+        let config = FetcherConfig::default();
+
+        assert_eq!(config.timeout, Duration::from_secs(30));
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.backoff_base_ms, 1000);
+        assert_eq!(config.retry_min_delay, Duration::from_millis(500));
+        assert_eq!(config.retry_max_delay, Duration::from_secs(15));
+        assert!(!config.verify_tls);
+        assert!(config.default_headers.is_empty());
+        assert_eq!(config.pool_max_idle, 10);
+        assert!(config.redirect_follow);
+        assert_eq!(config.redirect_max, 10);
+    }
+
+    #[test]
+    fn builder_overrides_every_field() {
+        let mut headers = HashMap::new();
+        headers.insert("User-Agent".to_string(), "probe".to_string());
+
+        let config = FetcherConfig::builder()
+            .timeout(90)
+            .timeout_duration(Duration::from_millis(1500))
+            .max_retries(7)
+            .backoff_base_ms(250)
+            .retry_bounds(Duration::from_millis(100), Duration::from_secs(5))
+            .verify_tls(true)
+            .header("X-Probe", "1")
+            .headers(headers)
+            .pool_max_idle(42)
+            .redirect(false, 3)
+            .build();
+
+        assert_eq!(config.timeout, Duration::from_millis(1500));
+        assert_eq!(config.max_retries, 7);
+        assert_eq!(config.backoff_base_ms, 250);
+        assert_eq!(config.retry_min_delay, Duration::from_millis(100));
+        assert_eq!(config.retry_max_delay, Duration::from_secs(5));
+        assert!(config.verify_tls);
+        assert_eq!(
+            config.default_headers.get("X-Probe").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            config.default_headers.get("User-Agent").map(String::as_str),
+            Some("probe")
+        );
+        assert_eq!(config.pool_max_idle, 42);
+        assert!(!config.redirect_follow);
+        assert_eq!(config.redirect_max, 3);
+    }
+
+    #[test]
+    fn header_calls_accumulate() {
+        let config = FetcherConfig::builder()
+            .header("A", "1")
+            .header("B", "2")
+            .header("A", "3")
+            .build();
+
+        assert_eq!(config.default_headers.len(), 2);
+        assert_eq!(
+            config.default_headers.get("A").map(String::as_str),
+            Some("3")
+        );
+    }
+}

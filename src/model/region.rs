@@ -2,14 +2,12 @@ use std::borrow::Borrow;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Region(
-    /// 区域名
-    String,
-);
+pub struct Region(String);
 
 impl Region {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        let value = value.into();
+        Self(value.trim().to_uppercase())
     }
 
     pub fn as_str(&self) -> &str {

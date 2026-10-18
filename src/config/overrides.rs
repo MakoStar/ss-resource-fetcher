@@ -8,14 +8,14 @@ use crate::config::AppConfig;
 
 static OVERRIDES: OnceLock<Vec<ConfigOverride>> = OnceLock::new();
 
-const SHORTHAND_SECTIONS: [&str; 7] = [
-    "FEATURE_FLAGS",
-    "FILE_PATH",
-    "FILE_NAME",
-    "REQUEST",
-    "EXTRACTOR",
-    "SERVER_ROUTE",
-    "LAUNCHER",
+pub(crate) const SHORTHAND_SECTIONS: [&str; 7] = [
+    "GLOBAL",
+    "NETWORK",
+    "FILE_EXTENSION",
+    "PATCH_UPDATE_TAG",
+    "TASK.CLIENT",
+    "TASK.LAUNCHER",
+    "TASK.UNCENSOR",
 ];
 
 #[derive(Debug, Clone)]
@@ -24,8 +24,8 @@ pub struct ConfigOverride {
     pub path: Vec<String>,
     /// 命令行原始输入
     pub raw: String,
-    /// 解析后的值
-    pub value: Value,
+    /// 解析后的值 None 表示删除该键
+    pub value: Option<Value>,
 }
 
 pub fn set_config_overrides(items: Vec<ConfigOverride>) {
@@ -54,7 +54,24 @@ impl ConfigOverride {
         Ok(Self {
             path: key.split('.').map(str::to_string).collect(),
             raw: raw.to_string(),
-            value: parse_value(value.trim()),
+            value: Some(parse_value(value.trim())),
+        })
+    }
+
+    pub fn parse_del(raw: &str) -> Result<Self> {
+        let key: &str = raw.trim();
+        if key.is_empty() {
+            bail!("invalid delete '{raw}', key is empty");
+        }
+
+        if key.contains('=') {
+            bail!("invalid delete '{raw}', --del takes a key only, use --set for KEY=VALUE");
+        }
+
+        Ok(Self {
+            path: key.split('.').map(str::to_string).collect(),
+            raw: raw.to_string(),
+            value: None,
         })
     }
 }
@@ -64,16 +81,19 @@ fn apply(cfg: &AppConfig, items: &[ConfigOverride]) -> Result<AppConfig> {
         return Ok(cfg.clone());
     }
 
-    let mut root: Table = Table::try_from(cfg).map_err(|err| anyhow!("{err}"))?;
-    let mut touched: HashSet<Vec<String>> = HashSet::new();
+    let mut root = Table::try_from(cfg).map_err(|err| anyhow!("{err}"))?;
+    let mut touched = HashSet::new();
 
     for item in items {
-        let path: Vec<String> = resolve_path(&root, item)?;
-        let append: bool = touched.contains(&path);
+        let path = resolve_path(&root, item)?;
+        let append = touched.contains(&path);
 
-        set_value(&mut root, &path, item.value.clone(), append)?;
+        match &item.value {
+            Some(value) => set_value(&mut root, &path, value.clone(), append)?,
+            None => remove_value(&mut root, &path)?,
+        }
         touched.insert(path);
-        logger::tips!("config override: {}", item.raw);
+        log::debug!("config override: {}", item.raw);
     }
 
     root.try_into()
@@ -92,17 +112,29 @@ fn resolve_path(root: &Table, item: &ConfigOverride) -> Result<Vec<String>> {
         return Ok(vec![key.to_string()]);
     }
 
-    for section in SHORTHAND_SECTIONS {
-        let Some(Value::Table(table)) = root.get(section) else {
-            continue;
-        };
+    if let Some(path) = find_key_path(root, key) {
+        return Ok(path);
+    }
 
-        if table.contains_key(key) {
-            return Ok(vec![section.to_string(), key.to_string()]);
+    bail!("unknown config key '{key}', use SECTION.KEY like TASK.CLIENT.FLAGS.OP.MERGE_PATCH")
+}
+
+fn find_key_path(table: &Table, key: &str) -> Option<Vec<String>> {
+    if table.contains_key(key) {
+        return Some(vec![key.to_string()]);
+    }
+
+    for (k, value) in table {
+        if let Value::Table(child) = value {
+            if let Some(mut sub) = find_key_path(child, key) {
+                let mut path = vec![k.to_string()];
+                path.append(&mut sub);
+                return Some(path);
+            }
         }
     }
 
-    bail!("unknown config key '{key}', use SECTION.KEY like FEATURE_FLAGS.IS_MERGE_PATCH")
+    None
 }
 
 fn ensure_known(root: &Table, path: &[String], raw: &str) -> Result<()> {
@@ -136,8 +168,35 @@ fn set_value(root: &mut Table, path: &[String], value: Value, append: bool) -> R
             .with_context(|| format!("config key '{key}' is not a section"))?;
     }
 
-    let current_value: Option<&Value> = current.get(last.as_str());
+    let current_value = current.get(last.as_str());
     current.insert(last.clone(), coerce(value, current_value, append));
+
+    Ok(())
+}
+
+fn remove_value(root: &mut Table, path: &[String]) -> Result<()> {
+    let Some((last, parents)) = path.split_last() else {
+        return Ok(());
+    };
+
+    let mut current: &mut Table = root;
+    for key in parents {
+        let next: &mut Value = current
+            .get_mut(key.as_str())
+            .with_context(|| format!("config key '{key}' not found"))?;
+
+        current = next
+            .as_table_mut()
+            .with_context(|| format!("config key '{key}' is not a section"))?;
+    }
+
+    if current.remove(last.as_str()).is_none() {
+        bail!(
+            "unknown config key '{}': '{}' not found",
+            path.join("."),
+            last
+        );
+    }
 
     Ok(())
 }
@@ -158,7 +217,7 @@ fn coerce(value: Value, current: Option<&Value>, append: bool) -> Value {
                 return Value::Array(vec![Value::String(raw)]);
             }
 
-            let mut merged: Vec<Value> = items.clone();
+            let mut merged = items.clone();
             merged.push(Value::String(raw));
             Value::Array(merged)
         }
@@ -168,7 +227,7 @@ fn coerce(value: Value, current: Option<&Value>, append: bool) -> Value {
 
 fn bracket_list(raw: &str) -> Option<Vec<Value>> {
     let inner: &str = raw.strip_prefix('[')?.strip_suffix(']')?;
-    let items: Vec<Value> = inner
+    let items = inner
         .split(',')
         .map(str::trim)
         .filter(|item| !item.is_empty())
@@ -200,18 +259,65 @@ mod tests {
             .collect()
     }
 
+    fn dels(keys: &[&str]) -> Vec<ConfigOverride> {
+        keys.iter()
+            .map(|key| ConfigOverride::parse_del(key).unwrap())
+            .collect()
+    }
+
     #[test]
     fn parses_key_and_value() {
-        let item: ConfigOverride =
-            ConfigOverride::parse("FEATURE_FLAGS.IS_MERGE_PATCH=false").unwrap();
+        let item = ConfigOverride::parse("TASK.CLIENT.FLAGS.OP.MERGE_PATCH=false").unwrap();
 
-        assert_eq!(item.path, ["FEATURE_FLAGS", "IS_MERGE_PATCH"]);
-        assert_eq!(item.value, Value::Boolean(false));
+        assert_eq!(item.path, ["TASK", "CLIENT", "FLAGS", "OP", "MERGE_PATCH"]);
+        assert_eq!(item.value, Some(Value::Boolean(false)));
     }
 
     #[test]
     fn rejects_missing_value() {
-        assert!(ConfigOverride::parse("FEATURE_FLAGS.IS_MERGE_PATCH").is_err());
+        assert!(ConfigOverride::parse("TASK.CLIENT.FLAGS.OP.MERGE_PATCH").is_err());
+    }
+
+    #[test]
+    fn del_rejects_value_syntax() {
+        assert!(ConfigOverride::parse_del("TASK.CLIENT.SERVERS.CN=https://x").is_err());
+        assert!(ConfigOverride::parse_del("").is_err());
+    }
+
+    #[test]
+    fn del_removes_map_entry() {
+        let cfg = apply(&AppConfig::default(), &dels(&["TASK.CLIENT.SERVERS.CN"])).unwrap();
+
+        assert!(!cfg.task.client.servers.contains_key("CN"));
+        assert!(cfg.task.client.servers.contains_key("EN"));
+    }
+
+    #[test]
+    fn del_removes_header_entry() {
+        let cfg = apply(
+            &AppConfig::default(),
+            &dels(&["NETWORK.HEADERS.User-Agent"]),
+        )
+        .unwrap();
+
+        assert!(!cfg.network.headers.contains_key("User-Agent"));
+        assert!(cfg.network.headers.contains_key("Accept-Encoding"));
+    }
+
+    #[test]
+    fn del_unknown_key_is_rejected() {
+        assert!(apply(&AppConfig::default(), &dels(&["NOPE"])).is_err());
+    }
+
+    #[test]
+    fn del_and_set_combine() {
+        let mut items = dels(&["TASK.CLIENT.SERVERS.CN"]);
+        items.extend(overrides(&["TASK.CLIENT.FLAGS.OP.MERGE_PATCH=false"]));
+
+        let cfg = apply(&AppConfig::default(), &items).unwrap();
+
+        assert!(!cfg.task.client.servers.contains_key("CN"));
+        assert!(!cfg.task.client.flags.op.merge_patch);
     }
 
     #[test]
@@ -223,79 +329,79 @@ mod tests {
 
     #[test]
     fn overrides_feature_flag_by_full_key() {
-        let cfg: AppConfig = apply(
+        let cfg = apply(
             &AppConfig::default(),
-            &overrides(&["FEATURE_FLAGS.IS_MERGE_PATCH=false"]),
+            &overrides(&["TASK.CLIENT.FLAGS.OP.MERGE_PATCH=false"]),
         )
         .unwrap();
 
-        assert!(!cfg.feature_flags.is_merge_patch);
+        assert!(!cfg.task.client.flags.op.merge_patch);
     }
 
     #[test]
     fn overrides_feature_flag_by_shorthand() {
-        let cfg: AppConfig = apply(
+        let cfg = apply(
             &AppConfig::default(),
-            &overrides(&["IS_DOWNLOAD_RESOURCE=false"]),
+            &overrides(&["DOWNLOAD_RESOURCE=false"]),
         )
         .unwrap();
 
-        assert!(!cfg.feature_flags.is_download_resource);
+        assert!(!cfg.task.client.flags.op.download_resource);
     }
 
     #[test]
     fn overrides_nested_server_entry() {
-        let cfg: AppConfig = apply(
+        let cfg = apply(
             &AppConfig::default(),
-            &overrides(&["SERVERS.CN.URL=https://example.com"]),
+            &overrides(&["TASK.CLIENT.SERVERS.CN.URL=https://example.com"]),
         )
         .unwrap();
 
-        assert_eq!(cfg.servers["CN"].url, "https://example.com");
+        assert_eq!(cfg.task.client.servers["CN"].url, "https://example.com");
     }
 
     #[test]
     fn list_key_accepts_bracket_syntax() {
-        let cfg: AppConfig = apply(
+        let cfg = apply(
             &AppConfig::default(),
-            &overrides(&["LAUNCHER.FILES=[a.dll,b.dat]"]),
+            &overrides(&["TASK.LAUNCHER.REGISTRY.FETCH_FILES=[a.dll,b.dat]"]),
         )
         .unwrap();
 
-        assert_eq!(cfg.launcher.files, ["a.dll", "b.dat"]);
+        assert_eq!(cfg.task.launcher.registry.fetch_files, ["a.dll", "b.dat"]);
     }
 
     #[test]
     fn list_key_accepts_repeated_scalars() {
-        let cfg: AppConfig = apply(
+        let cfg = apply(
             &AppConfig::default(),
-            &overrides(&["FILES=a.dll", "FILES=b.dat"]),
+            &overrides(&["FETCH_FILES=a.dll", "FETCH_FILES=b.dat"]),
         )
         .unwrap();
 
-        assert_eq!(cfg.launcher.files, ["a.dll", "b.dat"]);
+        assert_eq!(cfg.task.client.registry.fetch_files, ["a.dll", "b.dat"]);
     }
 
     #[test]
     fn list_key_is_replaced_on_first_override() {
-        let cfg: AppConfig = apply(&AppConfig::default(), &overrides(&["FILES=a.dll"])).unwrap();
+        let cfg = apply(&AppConfig::default(), &overrides(&["FETCH_FILES=a.dll"])).unwrap();
 
-        assert_eq!(cfg.launcher.files, ["a.dll"]);
+        assert_eq!(cfg.task.client.registry.fetch_files, ["a.dll"]);
     }
 
     #[test]
     fn unknown_key_is_rejected() {
-        let base: AppConfig = AppConfig::default();
+        let base = AppConfig::default();
 
-        assert!(apply(&base, &overrides(&["FEATURE_FLAGS.NOPE=false"])).is_err());
+        assert!(apply(&base, &overrides(&["TASK.CLIENT.FLAGS.OP.NOPE=false"])).is_err());
         assert!(apply(&base, &overrides(&["NOPE=false"])).is_err());
     }
 
     #[test]
     fn empty_overrides_returns_clone() {
-        let base: AppConfig = AppConfig::default();
-        let cfg: AppConfig = apply(&base, &[]).unwrap();
+        let base = AppConfig::default();
+        let cfg = apply(&base, &[]).unwrap();
 
-        assert_eq!(cfg.default_region, base.default_region);
+        assert_eq!(cfg.global.default_region, base.global.default_region);
     }
 }

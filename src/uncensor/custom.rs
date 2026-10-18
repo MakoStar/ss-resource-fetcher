@@ -22,6 +22,7 @@ impl CustomFilesTarget {
         path: &Path,
         region_override: Option<&Region>,
         requester: &HttpFetcher,
+        save_manifest: bool,
     ) -> Result<Self> {
         let list = Self::load(path)?;
         let region = match region_override {
@@ -29,7 +30,7 @@ impl CustomFilesTarget {
             None => Region::new(list.region.trim().to_uppercase()),
         };
 
-        let files: IndexSet<String> = list
+        let files = list
             .files
             .into_iter()
             .map(|name| name.trim().to_string())
@@ -38,12 +39,16 @@ impl CustomFilesTarget {
 
         Ok(Self {
             files,
-            region_target: RegionTarget::new(app, &region, requester)?,
+            region_target: RegionTarget::new(app, &region, requester, save_manifest)?,
         })
     }
 
     pub fn output_dir(&self) -> &Path {
         self.region_target.output_dir()
+    }
+
+    pub fn region(&self) -> &Region {
+        self.region_target.region()
     }
 
     pub async fn download(&self) -> Result<()> {
@@ -52,7 +57,7 @@ impl CustomFilesTarget {
             return Ok(());
         }
 
-        logger::head!("FETCH UNCENSOR RESOURCES FROM CUSTOM FILE LIST");
+        logger::head!("Fetch uncensor resources (custom list)");
         log::info!("custom file list lists {} resources", self.files.len());
 
         self.region_target.download_names(&self.files).await

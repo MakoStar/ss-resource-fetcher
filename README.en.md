@@ -1,145 +1,120 @@
 # ss-resource-fetcher
 
+[![CI](https://github.com/MakoStar/ss-resource-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/MakoStar/ss-resource-fetcher/actions/workflows/ci.yml)
 English | [简体中文](README.md)
 
-Multi-region resource fetcher for StellaSora. Pipeline: fetch manifest → decrypt → decode → extract patch manifest → download → merge patches.
+A multi-region resource fetcher for StellaSora. Pipeline: fetch manifest → AES-128-CBC decrypt → protobuf decode → extract patch manifest → download → bsdiff merge. Covers CN / EN / JP / KR / TW.
 
-## Quick start
+## Features
 
-The first run generates `ss-resource-fetcher.toml` in the working directory. Edit it and run again.
+- Three independent pipelines: `client` resources, `launcher` pack, `uncensor` pack
+- Downloads and merges by tier, restoring the full dependent patch chain to the latest version
+- Hash verification plus a cross-run cache: re-running never re-downloads or re-merges
+- Platform aware: switch `DEFAULT_PLATFORM` between win / and / ios, output is split by platform
+- Any config item can be overridden from the command line, no file editing required
+
+## Installation
+
+Requires Rust 1.85+ (edition 2024).
 
 ```bash
-ResourceFetcher                  # full pipeline
-ResourceFetcher run -r           # manifest record only
-ResourceFetcher uncensor         # uncensor pack only
-ResourceFetcher launcher -a      # every launcher resource
+git clone https://github.com/MakoStar/ss-resource-fetcher.git
+cd ss-resource-fetcher
+cargo build --release
 ```
 
-## Command overview
+The binary lands at `target/release/ResourceFetcher`, shortened to `ResourceFetcher` below.
 
-```
-ResourceFetcher [GLOBAL] [SUBCOMMAND [OPTIONS]]
-```
+## Usage
 
-| Level | Command / flag | Description |
-| --- | --- | --- |
-| Global | `--comments` | Write comments into the generated config |
-| Global | `--init` `[BOOL]` | Generate config: unset=if missing, `true`=regenerate, `false`=skip |
-| Global | `-s` `--set` `<KEY=VALUE>` | Override a config item, repeatable, works with any subcommand |
-| Subcommand | `run` (default) | Resource pipeline |
-| Subcommand | `uncensor` | Download the uncensor pack (exclusive, skips the pipeline) |
-| Subcommand | `launcher` | Download the launcher pack (exclusive, skips the pipeline) |
-
-Global flags are position-free: `ResourceFetcher --comments run` and `ResourceFetcher run -s ...` both work.
-
-## Every flag combination
-
-### `run`
-
-| Combination | Effect |
-| --- | --- |
-| `run` | Full pipeline (fetch → download → merge → version JSON) |
-| `run -r` / `run --record` | Manifest record only, no download, no merge |
-
-### `uncensor`
-
-| Combination | Effect |
-| --- | --- |
-| `uncensor` | Region mode, uses `[UNCENSOR].SOURCE_REGION`, names from the third-party manifest |
-| `uncensor -r CN` | Pick the region, overrides the configured source region |
-| `uncensor -d` | Default URL mode, skips the official manifest, writes to `UncensorDefault` |
-| `uncensor -c -p list.json` | Custom list, region taken from the JSON `region` field |
-| `uncensor -c -p list.json -r CN` | Custom list plus explicit region |
-| `uncensor -r CN -s SOURCE_REGION=CN` | Override the source region with `-s` (same as `-r`) |
-
-Conflicts: `-r` × `-d`, `-c` × `-d`; `-c` requires `-p`.
-
-```jsonc
-// uncensor custom list.json
-{ "region": "TW", "files": ["char_2d_14901.unity3d"] }
+```bash
+ResourceFetcher client                 # full pipeline: fetch → download → merge → version JSON
+ResourceFetcher client -r              # dump the manifest only, no download
+ResourceFetcher launcher -a            # every launcher resource
+ResourceFetcher uncensor -r CN         # the CN uncensor pack
 ```
 
-### `launcher`
+Running it bare only prints the help. Three subcommands, three independent pipelines:
 
-Three independent dimensions: **region** × **scope (required)** × **layout (optional)**.
-
-| Dimension | Flag | Values |
-| --- | --- | --- |
-| Region | `-r` `--region` `<REGION>` | CN / EN / JP / KR / TW, case-insensitive; unset = all regions |
-| Scope | `-a` `--all` | every manifest file |
-| Scope | `-p` `--pattern` `<REGEX>` | regex, repeatable |
-| Scope | `-f` `--file` `<NAME>` | file names, repeatable |
-| Scope | `-e` `--regex` | use configured `[LAUNCHER].PATTERNS` |
-| Scope | `-e false` | use configured `[LAUNCHER].FILES` |
-| Layout | `-k` `--keep` | save by manifest path, flattened by default |
-
-| Combination | Effect |
+| Subcommand | Purpose |
 | --- | --- |
-| `launcher -a` | all regions × every file |
-| `launcher -a -k` | everything, keeping the directory layout (a full client pull) |
-| `launcher -r CN -a` | every file of CN |
-| `launcher -p '^app\.info$'` | all regions × regex match |
-| `launcher -r CN -p '^app\.info$' -p '^boot\.config$'` | CN × several regexes |
-| `launcher -r CN -f app.info -f boot.config` | CN × listed files |
-| `launcher -r CN -e` | CN × configured PATTERNS |
-| `launcher -r CN -e false` | CN × configured FILES |
-| `launcher -r CN -e false -s 'FILES=[a.dll,b.dat]'` | feed FILES inline with `-s` |
-| `launcher -r CN -a -k` | CN × everything × keep layout |
-| `launcher -r CN -k -p '^app\.info$'` | CN × regex × keep layout |
+| `client` | Regular resource pipeline (download + merge + version JSON) |
+| `launcher` | Download the launcher pack |
+| `uncensor` | Download the uncensor pack |
 
-Rules:
+`launcher` requires an explicit scope (`-a` / `-p` / `-f` / `-e`, pick one); `uncensor` has three modes: region, default URL and custom list.
 
-- **The scope must be explicit**: with none of `-a` / `-p` / `-f` / `-e` it errors out; `-a` conflicts with `-p` and `-f`.
-- `-e` may combine with `-p` (`-p` wins); `-e false` may combine with `-f` (`-f` wins).
-- Priority: `-a` > `-f` > `-e false` > `-p` > `-e`.
-- If `IS_USE_DEFAULT_REGION` filtered the region out, `-r` falls back to the built-in endpoint (logged as `built-in endpoint`);
-  without `-r` only the surviving regions run — add `-s IS_USE_DEFAULT_REGION=false` for all of them.
-- `-k`: flattened by default (`output/Launcher/CN/data.unity3d`); with `-k` the manifest path is kept (`output/Launcher/CN/xtlr_Data/data.unity3d`).
-- `-f` matches by file name, or by path when it contains `/`; unknown entries are warned about.
-- A single failed file (e.g. HTTP 403) is warned and skipped; the run ends with a failure count.
+## Configuration
 
-## Overriding config
+Built-in defaults are used and **nothing is written** by default. Two ways to change config:
 
-`-s SECTION.KEY=VALUE` overrides any config item for this run only, and may be repeated.
+**Temporary override** — `-s SECTION.KEY=VALUE`, this run only, repeatable:
 
-| Form | Example |
-| --- | --- |
-| Full path | `-s FEATURE_FLAGS.IS_MERGE_PATCH=false` |
-| Shorthand (section omitted) | `-s IS_DOWNLOAD_RESOURCE=false` |
-| Bool | `-s IS_USE_DEFAULT_REGION=false` |
-| Number | `-s REQUEST.TIMEOUT_SECS=60` |
-| String (quotes optional) | `-s DEFAULT_REGION=CN`, `-s FILE_PATH.UNPACK_OUTPUT_DIR=./unpack` |
-| Nested table | `-s SERVERS.CN.URL=https://example.com` |
-| Array (brackets) | `-s 'LAUNCHER.FILES=[a.dll,b.dat]'` |
-| Array (strict TOML) | `-s 'LAUNCHER.FILES=["a.dll","b.dat"]'` |
-| Array (repeat to append) | `-s FILES=a.dll -s FILES=b.dat` |
+```bash
+ResourceFetcher client -s DEFAULT_REGION=JP
+ResourceFetcher client -s DEFAULT_PLATFORM=and            # win / and / ios
+ResourceFetcher client -s PATCH_TAGS=[u,n]                # include whole-file patches
+ResourceFetcher -d TASK.CLIENT.SERVERS.CN client          # remove a config item
+```
 
-- Shorthand lookup searches `FEATURE_FLAGS`, `FILE_PATH`, `FILE_NAME`, `REQUEST`, `EXTRACTOR`, `SERVER_ROUTE`, `LAUNCHER`.
-- For list keys the first override **replaces** the value, repeating the same key **appends**; `[a,b]` gives several at once.
-- An unknown key is a hard error: `unknown config key 'NOPE', use SECTION.KEY like FEATURE_FLAGS.IS_MERGE_PATCH`.
-- Each override logs `config override: xxx`; overrides apply before region filtering and validation.
+**Persistent config** — generate the file first, then edit it:
 
-## Config file
+```bash
+ResourceFetcher --gen_config        # writes ss-resource-fetcher.toml (overwrites)
+ResourceFetcher --print_keys        # every key with its type and default
+```
 
-| Combination | Effect |
-| --- | --- |
-| (default) | Generate when missing, otherwise read it |
-| `--comments` | Write Chinese comments into the generated config |
-| `--init` | Force regeneration, overwriting the existing file |
-| `--init=false` | Do not generate; run with built-in defaults |
-| `--comments --init` | Regenerate a commented config |
+The config file is TOML, organised into `GLOBAL` / `NETWORK` / `PATCH_UPDATE_TAG` / `TASK.CLIENT` / `TASK.LAUNCHER` / `TASK.UNCENSOR`. Arrays take brackets (`-s 'FILES=[a,b]'`) and repeating a key appends. Platform-related fields store the real value for the current platform, so switching `DEFAULT_PLATFORM` makes the next load follow along.
 
-`--comments` only applies on the run that generates the file; otherwise it prints a hint.
+## Command-line options
+
+`--help` is the source of truth:
+
+```text
+$ ResourceFetcher --help
+Multi-region resource fetcher for StellaSora: fetch, decrypt, decode and merge hotfix patches.
+
+Usage: ResourceFetcher [OPTIONS] [COMMAND]
+
+Commands:
+  client    Client resource pipeline
+  launcher  Download the launcher pack
+  uncensor  Download the uncensor pack
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -s, --set <KEY=VALUE>        Override a config item, repeatable
+  -g, --gen_config[=<BOOL>]    Write the config file, unset=skip, true=generate (overwrites) [possible values: true, false]
+  -a, --add_comments [<LANG>]  Write comments into the generated config, cn or en [possible values: cn, en]
+      --log_level <LEVEL>      Log level: off, error, warn, info, debug, trace [default: info]
+  -p, --print_keys             Print every -s KEY=VALUE key with type and default
+  -d, --del <KEY>              Remove a config item, repeatable
+  -h, --help                   Print help
+  -V, --version                Print version
+```
+
+See `ResourceFetcher <subcommand> --help` for each subcommand's flags.
 
 ## Output
 
+Everything lands under `output/`, split by `<task>/<region>/<platform>/`:
+
 | Directory | Contents |
 | --- | --- |
-| `output/Manifest` | manifests and patch manifests |
-| `output/Metadata` | downloaded patch resources |
+| `output/Manifest` | manifest and patch manifest |
+| `output/Metadata` | downloaded patch resources, the cross-run cache |
 | `output/Unpack` | merged unpacked files |
-| `output/Uncensor` | uncensor resources (region / custom list) |
-| `output/UncensorDefault` | uncensor resources (default URL) |
-| `output/Launcher` | launcher resources and manifest, per region |
+| `output/Uncensor/` | uncensor output (`Manifest` / `Metadata` / `Resource` / `Default`) |
+| `output/Launcher` | launcher resources and manifest |
 
-Files whose hash already matches are skipped; force a re-download with `IS_OVERWRITE_RESOURCE`.
+Files whose hash already matches are skipped and logged as `cached:`; set `IS_OVERWRITE_RESOURCE` to force a re-download.
+
+## Development
+
+```bash
+cargo test                 # 185 tests: inline unit tests in src/** plus tests/ integration
+cargo clippy --all-targets
+cargo fmt --all -- --check
+```
+
+`tests/fixtures/` holds real server data (a plaintext manifest, a bsdiff patch) so a format change breaks the build. Synthetic data checks the algorithm, real fixtures check the format — you need both.

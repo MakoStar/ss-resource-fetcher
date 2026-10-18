@@ -1,5 +1,6 @@
 mod custom;
 mod default;
+mod merge;
 mod region;
 mod target;
 

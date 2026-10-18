@@ -30,15 +30,13 @@ impl ManifestFetcher {
 
     pub fn from_app_config(app: &AppConfig) -> Self {
         Self::new(
-            app.server_route.manifest_route.clone(),
+            app.task.client.route.manifest.clone(),
             app.server_urls(),
             HttpFetcher::new(&app.build_fetcher_config()),
         )
     }
 
     pub async fn fetch_one(&self, region: &Region) -> Result<Vec<u8>> {
-        logger::head!("FETCH MANIFEST {region}");
-
         let server_url = self
             .servers
             .get(region)

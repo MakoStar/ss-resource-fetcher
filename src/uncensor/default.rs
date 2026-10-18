@@ -8,6 +8,7 @@ use crate::config::AppConfig;
 use crate::error::Result;
 use crate::manifest::ManiResource;
 use crate::model::{DownloadProgress, SEPARATOR};
+use crate::storage::push_platform;
 
 pub struct DefaultUrlTarget {
     /// 资源基础地址
@@ -23,9 +24,12 @@ pub struct DefaultUrlTarget {
 impl DefaultUrlTarget {
     pub fn new(app: &AppConfig, requester: &HttpFetcher) -> Self {
         Self {
-            resource_base_url: app.uncensor.resource_base_url(),
-            output_dir: PathBuf::from(&app.file_path.uncensor_default_output_dir),
-            overwrite: app.feature_flags.is_overwrite_resource,
+            resource_base_url: app.task.uncensor.resource_base_url(None),
+            output_dir: push_platform(
+                PathBuf::from(&app.task.uncensor.filepath.default),
+                &app.global.default_platform,
+            ),
+            overwrite: app.task.client.flags.op.overwrite_resource,
             requester: requester.clone(),
         }
     }
@@ -36,10 +40,11 @@ impl DefaultUrlTarget {
 
     pub async fn download(&self, wanted: &IndexMap<String, ManiResource>) -> Result<()> {
         if self.overwrite {
-            logger::tips!("IS_OVERWRITE_RESOURCE is enabled, resources will re-download !!!");
+            logger::tips!("overwrite enabled, resources re-download");
         }
 
-        logger::head!("FETCHING UNCENSOR RESOURCES {}", self.resource_base_url);
+        logger::head!("Fetch uncensor resources");
+        log::debug!("[uncensor] base url: {}", self.resource_base_url);
 
         let total = wanted.len();
         for (index, (name, resource)) in wanted.iter().enumerate() {
@@ -104,7 +109,7 @@ impl DefaultUrlTarget {
         }
 
         if FileHandler::verify_md5(save_path, &resource.hash).is_ok() {
-            logger::step!("{prefix} SKIP (cached): {name}");
+            logger::step!("{prefix} cached: {name}");
             true
         } else {
             log::warn!("{prefix} {name} MD5 mismatch, will re-download");

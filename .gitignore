@@ -1,5 +1,38 @@
+# ─── Build ─────────────────────────────────────────────────────
 /target
-/.vscode
-/tests
+
+# Cargo.lock is committed on purpose: this is a binary, so a
+# reproducible dependency tree matters more than downstream flexibility.
+
+# ─── Runtime output, regenerated on every run ──────────────────
 /output
+/out
+keys.txt
+
+# ─── Generated app config file ─────────────────────────────────
 /ss-resource-fetcher.toml
+
+# ─── Local scratch material, never part of the repo ────────────
+/scratch
+/ss_tmp
+
+# ─── Editors ───────────────────────────────────────────────────
+/.vscode
+/.idea
+*.swp
+*~
+
+# ─── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Logs & temporaries ────────────────────────────────────────
+*.log
+*.tmp
+*.bak
+
+# ─── Release staging, written by .github/workflows/release.yml ─
+/dist
+
+# tests/fixtures holds real server data and must stay tracked.

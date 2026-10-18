@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
-use crate::config::{AppConfig, LauncherConfig, LauncherServerConfig, compile_patterns};
+use crate::config::{AppConfig, LauncherServerConfig, LauncherTaskConfig, compile_patterns};
 use crate::error::{AppError, Result};
 use crate::model::{DownloadProgress, LauncherSelect, LauncherSource, Region, SEPARATOR};
 use crate::storage::RegionFileStore;
@@ -21,7 +21,7 @@ const USER_AGENT: &str =
 
 pub struct LauncherFetcher {
     /// launcher 端点配置
-    settings: LauncherConfig,
+    settings: LauncherTaskConfig,
     /// 资源输出目录
     output_dir: PathBuf,
     /// 清单文件名
@@ -43,17 +43,17 @@ pub struct LauncherFetcher {
 impl LauncherFetcher {
     pub fn from_app_config(app: &AppConfig) -> Result<Self> {
         Self::new(
-            app.launcher.clone(),
-            PathBuf::from(&app.file_path.launcher_output_dir),
-            app.file_name.launcher_manifest_file.clone(),
-            app.feature_flags.is_overwrite_resource,
-            app.launcher.patterns()?.to_vec(),
+            app.task.launcher.clone(),
+            PathBuf::from(&app.task.launcher.filepath.output),
+            app.task.launcher.filename.manifest.clone(),
+            app.task.launcher.flags.op.overwrite_resource,
+            app.task.launcher.patterns()?.to_vec(),
             HttpFetcher::new(&app.build_fetcher_config()),
         )
     }
 
     pub fn new(
-        settings: LauncherConfig,
+        settings: LauncherTaskConfig,
         output_dir: impl Into<PathBuf>,
         manifest_file: impl Into<String>,
         overwrite: bool,
@@ -103,10 +103,10 @@ impl LauncherFetcher {
     }
 
     fn servers(&self, source: &LauncherSource) -> Result<IndexMap<Region, LauncherServerConfig>> {
-        let mut servers: IndexMap<Region, LauncherServerConfig> = IndexMap::new();
+        let mut servers = IndexMap::new();
 
         for (name, server) in &self.settings.servers {
-            let region: Region = Region::new(name.clone());
+            let region = Region::new(name.clone());
             if source.matches(&region) {
                 servers.insert(region, server.clone());
             }
@@ -142,7 +142,7 @@ impl LauncherFetcher {
     }
 
     async fn fetch_region(&self, region: &Region, server: &LauncherServerConfig) -> Result<()> {
-        let manifest: LauncherManifest = self.fetch_manifest(region, server).await?;
+        let manifest = self.fetch_manifest(region, server).await?;
         self.download_resources(region, server, &manifest).await
     }
 
@@ -151,22 +151,24 @@ impl LauncherFetcher {
         region: &Region,
         server: &LauncherServerConfig,
     ) -> Result<LauncherManifest> {
-        logger::head!("FETCH LAUNCHER CONFIG {region}");
+        logger::head!("Fetch launcher config {region}");
 
-        let config_url: String = self.settings.config_url(server);
-        let payload: ConfigPayload = self.get_json(&config_url, server).await?;
-        let version: String = self.payload_field(region, &payload, &self.settings.version_key)?;
-        let file_path: String = self.payload_field(region, &payload, &self.settings.path_key)?;
+        let config_url = self.settings.config_url(server);
+        let payload = self.get_json(&config_url, server).await?;
+        let version =
+            self.payload_field(region, &payload, &self.settings.extract_key.latest_version)?;
+        let file_path =
+            self.payload_field(region, &payload, &self.settings.extract_key.latest_filepath)?;
 
         log::info!("[{region}] launcher version {version}");
 
-        let link_url: String = self
+        let link_url = self
             .settings
             .manifest_link_url(server, &version, &file_path);
         let link: LinkPayload = self.get_json(&link_url, server).await?;
-        let bytes: Vec<u8> = self.get_bytes(&link.data.url, server).await?;
+        let bytes = self.get_bytes(&link.data.url, server).await?;
 
-        if self.settings.is_save_manifest {
+        if self.settings.flags.save.raw_manifest {
             RegionFileStore::new(&self.output_dir, &self.manifest_file)
                 .save_bytes(region, &bytes)?;
         }
@@ -192,31 +194,31 @@ impl LauncherFetcher {
         server: &LauncherServerConfig,
         manifest: &LauncherManifest,
     ) -> Result<()> {
-        let wanted: Vec<LauncherResource> = self.select_resources(server, manifest);
+        let wanted = self.select_resources(server, manifest);
         if wanted.is_empty() {
             log::warn!("[{region}] {}", self.empty_reason());
             return Ok(());
         }
 
-        logger::head!("FETCHING LAUNCHER RESOURCES {region}");
+        logger::head!("Fetch launcher resources {region}");
         if self.all_files {
-            logger::tips!("launcher --all is enabled, every manifest file will download");
+            logger::tips!("--all enabled, every manifest file downloads");
         }
 
-        let missing: usize = self.missing_files(manifest);
+        let missing = self.missing_files(manifest);
         if missing > 0 {
             log::warn!("[{region}] {missing} listed file(s) not in manifest");
         }
         if self.overwrite {
-            logger::tips!("IS_OVERWRITE_RESOURCE is enabled, resources will re-download !!!");
+            logger::tips!("overwrite enabled, resources re-download");
         }
 
-        let total: usize = wanted.len();
+        let total = wanted.len();
         log::info!("[{region}] matched {total} launcher resources");
 
-        let mut failed: usize = 0;
+        let mut failed = 0;
         for (index, resource) in wanted.iter().enumerate() {
-            let progress: DownloadProgress = DownloadProgress::new(index + 1, total);
+            let progress = DownloadProgress::new(index + 1, total);
             if self
                 .download_one(region, server, resource, progress)
                 .await
@@ -252,7 +254,7 @@ impl LauncherFetcher {
         server: &LauncherServerConfig,
         manifest: &LauncherManifest,
     ) -> Vec<LauncherResource> {
-        let mut resources: Vec<LauncherResource> = Vec::new();
+        let mut resources = Vec::new();
 
         for file in &manifest.file {
             let name: &str = match file.name() {
@@ -260,7 +262,7 @@ impl LauncherFetcher {
                 _ => continue,
             };
 
-            let matched: bool = if self.all_files {
+            let matched = if self.all_files {
                 true
             } else if !self.files.is_empty() {
                 self.in_file_list(name, file.path.trim_start_matches('/'))
@@ -275,7 +277,7 @@ impl LauncherFetcher {
             resources.push(LauncherResource {
                 name: name.to_string(),
                 path: file.relative_path(),
-                url: LauncherConfig::resource_url(server, &manifest.source, &file.path),
+                url: LauncherTaskConfig::resource_url(server, &manifest.source, &file.path),
                 size: parse_size(&file.size),
             });
         }
@@ -320,14 +322,14 @@ impl LauncherFetcher {
         resource: &LauncherResource,
         progress: DownloadProgress,
     ) -> Result<()> {
-        let prefix: String = progress.prefix();
-        let save_path: PathBuf = self.output_path(region, resource);
+        let prefix = progress.prefix();
+        let save_path = self.output_path(region, resource);
 
         if self.is_cached(region, &save_path, resource, &prefix) {
             return Ok(());
         }
 
-        let bytes: Vec<u8> = self.get_bytes(&resource.url, server).await?;
+        let bytes = self.get_bytes(&resource.url, server).await?;
         FileHandler::write_bytes(&bytes, &save_path)?;
 
         log::info!(
@@ -370,13 +372,13 @@ impl LauncherFetcher {
             return false;
         }
 
-        let same_size: bool = match resource.size {
+        let same_size = match resource.size {
             Some(expected) => FileHandler::file_size(save_path) == Some(expected),
             None => true,
         };
 
         if same_size {
-            logger::step!("[{region}] {prefix} SKIP (cached): {}", resource.name);
+            logger::step!("[{region}] {prefix} cached: {}", resource.name);
             true
         } else {
             log::warn!(
@@ -398,22 +400,22 @@ impl LauncherFetcher {
     }
 
     fn authorization(&self, server: &LauncherServerConfig) -> Result<String> {
-        let head: AuthHead = AuthHead {
+        let head = AuthHead {
             game_tag: &server.tag,
             time: unix_timestamp()?,
             version: &self.settings.version,
         };
 
-        let unsigned: String = serde_json::to_string(&head)?;
+        let unsigned = serde_json::to_string(&head)?;
         let digest = Md5::digest(format!("{unsigned}{}", server.salt).as_bytes());
-        let sign: String = hex::encode(digest);
-        let payload: Authorization = Authorization { head, sign };
+        let sign = hex::encode(digest);
+        let payload = Authorization { head, sign };
 
         Ok(serde_json::to_string(&payload)?)
     }
 
     async fn get_bytes(&self, url: &str, server: &LauncherServerConfig) -> Result<Vec<u8>> {
-        let spec: RequestSpec = RequestSpec::builder(HttpMethod::Get, url)
+        let spec = RequestSpec::builder(HttpMethod::Get, url)
             .header("User-Agent", USER_AGENT)
             .header("Authorization", self.authorization(server)?)
             .build();
@@ -432,7 +434,7 @@ impl LauncherFetcher {
         url: &str,
         server: &LauncherServerConfig,
     ) -> Result<T> {
-        let bytes: Vec<u8> = self.get_bytes(url, server).await?;
+        let bytes = self.get_bytes(url, server).await?;
 
         Ok(serde_json::from_slice(&bytes)?)
     }
@@ -531,8 +533,8 @@ struct Authorization<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{LauncherManifest, LauncherResource, ManifestFile, parse_size};
-    use crate::config::{LauncherConfig, LauncherServerConfig};
+    use super::{LauncherManifest, ManifestFile, parse_size};
+    use crate::config::{LauncherServerConfig, LauncherTaskConfig};
     use crate::model::{LauncherSelect, LauncherSource, Region};
     use serde_json::{Value, json};
     use std::path::Path;
@@ -541,8 +543,8 @@ mod tests {
         LauncherServerConfig {
             tag: "StellaSora_KR".into(),
             salt: "salt".into(),
-            api_url: "https://api.example.com".into(),
-            pkg_url: "https://pkg.example.com".into(),
+            api: "https://api.example.com".into(),
+            pkg: "https://pkg.example.com".into(),
         }
     }
 
@@ -568,7 +570,7 @@ mod tests {
 
     fn fetcher_with(select: LauncherSelect, keep_path: bool) -> super::LauncherFetcher {
         super::LauncherFetcher::new(
-            LauncherConfig::default(),
+            LauncherTaskConfig::default(),
             "./output/Launcher",
             "launcher_manifest.json",
             false,
@@ -591,7 +593,7 @@ mod tests {
 
     #[test]
     fn selects_only_pattern_matching_files() {
-        let selected: Vec<LauncherResource> =
+        let selected =
             fetcher(regex(&[r"^data\.unity3d$"])).select_resources(&server(), &manifest());
 
         assert_eq!(selected.len(), 1);
@@ -605,25 +607,22 @@ mod tests {
 
     #[test]
     fn selects_everything_when_pattern_is_broad() {
-        let selected: Vec<LauncherResource> =
-            fetcher(regex(&[r"\.unity3d$"])).select_resources(&server(), &manifest());
+        let selected = fetcher(regex(&[r"\.unity3d$"])).select_resources(&server(), &manifest());
 
         assert_eq!(selected.len(), 2);
     }
 
     #[test]
     fn no_pattern_match_returns_empty() {
-        let selected: Vec<LauncherResource> =
-            fetcher(regex(&[r"^lua\.arcx$"])).select_resources(&server(), &manifest());
+        let selected = fetcher(regex(&[r"^lua\.arcx$"])).select_resources(&server(), &manifest());
 
         assert!(selected.is_empty());
     }
 
     #[test]
     fn file_list_matches_name_and_path() {
-        let selected: Vec<LauncherResource> =
-            fetcher(files(&["data.unity3d", "StellaSora_Data/other.unity3d"]))
-                .select_resources(&server(), &manifest());
+        let selected = fetcher(files(&["data.unity3d", "StellaSora_Data/other.unity3d"]))
+            .select_resources(&server(), &manifest());
 
         assert_eq!(selected.len(), 2);
         assert_eq!(selected[0].name, "data.unity3d");
@@ -633,7 +632,7 @@ mod tests {
     #[test]
     fn file_list_ignores_unknown_names() {
         let fetcher = fetcher(files(&["data.unity3d", "missing.bin"]));
-        let selected: Vec<LauncherResource> = fetcher.select_resources(&server(), &manifest());
+        let selected = fetcher.select_resources(&server(), &manifest());
 
         assert_eq!(selected.len(), 1);
         assert_eq!(fetcher.missing_files(&manifest()), 1);
@@ -648,7 +647,7 @@ mod tests {
 
     #[test]
     fn all_files_mode_ignores_patterns() {
-        let selected: Vec<LauncherResource> =
+        let selected =
             fetcher_with(LauncherSelect::All, false).select_resources(&server(), &manifest());
 
         assert_eq!(selected.len(), 2);
@@ -658,7 +657,7 @@ mod tests {
     #[test]
     fn keep_path_saves_relative_manifest_path() {
         let fetcher = fetcher_with(regex(&[r"^data\.unity3d$"]), true);
-        let selected: Vec<LauncherResource> = fetcher.select_resources(&server(), &manifest());
+        let selected = fetcher.select_resources(&server(), &manifest());
 
         assert_eq!(
             fetcher.output_path(&Region::new("CN"), &selected[0]),
@@ -669,7 +668,7 @@ mod tests {
     #[test]
     fn flat_mode_saves_file_name_only() {
         let fetcher = fetcher(regex(&[r"^data\.unity3d$"]));
-        let selected: Vec<LauncherResource> = fetcher.select_resources(&server(), &manifest());
+        let selected = fetcher.select_resources(&server(), &manifest());
 
         assert_eq!(
             fetcher.output_path(&Region::new("CN"), &selected[0]),

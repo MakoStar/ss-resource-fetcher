@@ -1,122 +1,188 @@
 use std::collections::HashSet;
 
-const HEADER_TITLE: &str = "应用程序配置文件";
-const HEADER_NOTES: &[&str] = &[
-    "修改后重启应用即可生效",
-    "也可以用 -s/--set 段.键=值 临时覆盖，不改这个文件",
-];
+use clap::ValueEnum;
 
-const SECTION_COMMENTS: &[(&str, &str, &[&str])] = &[
-    ("[SERVER_ROUTE]", "服务器路由配置", &[]),
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommentLang {
+    Cn,
+    En,
+}
+
+const HEADER: &[(&str, &str)] = &[
+    ("应用程序配置文件", "Application config file"),
+    ("修改后重启应用即可生效", "Restart to apply changes"),
     (
-        "[FILE_PATH]",
-        "文件路径配置",
-        &["注意：所有路径都是相对于程序运行目录"],
-    ),
-    ("[FILE_NAME]", "文件名配置", &[]),
-    (
-        "[EXTRACTOR]",
-        "提取器配置",
-        &["当前应用于 .mani 文件 version 提取 key (DO NOT EDIT)"],
-    ),
-    (
-        "[REQUEST]",
-        "HTTP 请求配置",
-        &[
-            "如果网络不好或者文件太大, 请求读取 body 会超时",
-            "可适当增加 TIMEOUT_SECS 来避免(特别是 lua.arcx )",
-        ],
-    ),
-    ("[RESOURCE_REGISTRY]", "资源注册表配置", &[]),
-    (
-        "[UNCENSOR]",
-        "Uncensor 资源包配置",
-        &[
-            "命令行用 uncensor 子命令执行（独占任务，不跑常规流水线）",
-            "URL: 第三方 Uncensor 清单服务器",
-            "SOURCE_REGION: 实际下载资源所用的官方区域",
-            "uncensor -r/--region <区域>: 覆盖 SOURCE_REGION，走官方清单匹配下载",
-            "uncensor -d/--default: 直接用 URL 下的资源下载，输出到 UNCENSOR_DEFAULT_OUTPUT_DIR",
-            "uncensor -c/--custom -p/--path <JSON>: 用自定义文件列表下载",
-        ],
-    ),
-    (
-        "[LAUNCHER]",
-        "Launcher 资源包配置",
-        &[
-            "命令行用 launcher 子命令执行（独占任务，不跑常规流水线）",
-            "下载范围必须显式指定：全部 / 正则 / 文件列表，什么都不给会直接报错",
-            "launcher -r/--region <区域>: 只下载指定区域，不传则下载 SERVERS 里的全部区域",
-            "launcher -a/--all: 下载清单里的全部资源，不需要配 PATTERNS",
-            "launcher -p/--pattern <正则>: 按正则筛选（按清单里的文件名匹配），可重复传入",
-            "launcher -f/--file <文件名>: 只下载列出的文件，可重复传入，带目录时按 path 匹配",
-            "launcher -e/--regex: 显式启用正则，用这里的 PATTERNS；-e false 则用 FILES",
-            "launcher -k/--keep: 按清单里的 path 建目录保存，不再摊平成文件名",
-            "PATTERNS: -e/--regex 启用时的正则",
-            "FILES: -e false 时下载的文件列表",
-        ],
-    ),
-    (
-        "[LAUNCHER.SERVERS.",
-        "Launcher 端点配置",
-        &[
-            "区域名 = { TAG = \"游戏标识\", SALT = \"签名盐值\", API_URL = \"配置接口\", PKG_URL = \"资源包地址\" }",
-        ],
-    ),
-    (
-        "[SERVERS.",
-        "服务器配置",
-        &[
-            "区域名 = { URL = \"服务器地址\", KEY = \"密钥\" }",
-            "KEY: 来自于提取的 ClientConfig.json 的 serverMetaKey",
-        ],
-    ),
-    (
-        "[FEATURE_FLAGS]",
-        "功能开关",
-        &[
-            "注意: IS_SAVE_PATCH_MANIFEST 必须是 true",
-            "因为合并补丁需要读取补丁清单和校验清单中的 hash",
-        ],
+        "-s/--set 段.键=值 可临时覆盖，无需改此文件",
+        "-s/--set SECTION.KEY=VALUE overrides at runtime",
     ),
 ];
 
-const KEY_COMMENTS: &[(&str, &str)] = &[(
-    "DEFAULT_REGION = ",
-    "# 默认区域: 启用 IS_USE_DEFAULT_REGION 时生效",
-)];
+const SECTIONS: &[(&str, &str, &str)] = &[
+    ("[GLOBAL]", "全局配置", "Global settings"),
+    ("[NETWORK.HEADERS]", "请求头", "Request headers"),
+    ("[NETWORK]", "网络客户端", "HTTP client"),
+    ("[FILE_EXTENSION]", "文件扩展名", "File extensions"),
+    (
+        "[PATCH_UPDATE_TAG]",
+        "补丁标签: u 增量 / n 整文件 / m 清单",
+        "Patch tags: u=delta, n=full file, m=manifest",
+    ),
+    ("[TASK.CLIENT]", "热更客户端任务", "Client task"),
+    (
+        "[TASK.CLIENT.ROUTE]",
+        "客户端路由（平台相关）",
+        "Client routes (platform-bound)",
+    ),
+    (
+        "[TASK.CLIENT.SERVERS.",
+        "各区域服务器: URL 地址 / KEY 密钥",
+        "Per-region servers: URL / decrypt KEY",
+    ),
+    (
+        "[TASK.CLIENT.FILENAME]",
+        "客户端文件名（平台相关）",
+        "Client file names (platform-bound)",
+    ),
+    (
+        "[TASK.CLIENT.FILEPATH]",
+        "客户端输出目录",
+        "Client output paths",
+    ),
+    (
+        "[TASK.CLIENT.REGISTRY]",
+        "下载与解包范围",
+        "Download and unpack scope",
+    ),
+    (
+        "[TASK.CLIENT.EXTRACTKEY]",
+        "版本提取键",
+        "Version extract keys",
+    ),
+    (
+        "[TASK.CLIENT.FLAGS.SAVE]",
+        "客户端保存开关",
+        "Client save flags",
+    ),
+    (
+        "[TASK.CLIENT.FLAGS.OP]",
+        "客户端运行开关",
+        "Client run flags",
+    ),
+    ("[TASK.LAUNCHER]", "Launcher 任务", "Launcher task"),
+    ("[TASK.LAUNCHER.ROUTE]", "Launcher 路由", "Launcher routes"),
+    (
+        "[TASK.LAUNCHER.SERVERS.",
+        "各区域端点:TAG / SALT / API / PKG",
+        "Per-region endpoints: TAG / SALT / API / PKG",
+    ),
+    (
+        "[TASK.LAUNCHER.FILENAME]",
+        "Launcher 文件名",
+        "Launcher file names",
+    ),
+    (
+        "[TASK.LAUNCHER.FILEPATH]",
+        "Launcher 输出目录",
+        "Launcher output paths",
+    ),
+    (
+        "[TASK.LAUNCHER.REGISTRY]",
+        "下载范围（须显式指定）",
+        "Download scope (required)",
+    ),
+    (
+        "[TASK.LAUNCHER.EXTRACTKEY]",
+        "版本提取键",
+        "Version extract keys",
+    ),
+    (
+        "[TASK.LAUNCHER.FLAGS.SAVE]",
+        "Launcher 保存开关",
+        "Launcher save flags",
+    ),
+    (
+        "[TASK.LAUNCHER.FLAGS.OP]",
+        "Launcher 运行开关",
+        "Launcher run flags",
+    ),
+    ("[TASK.UNCENSOR]", "反和谐任务", "Uncensor task"),
+    (
+        "[TASK.UNCENSOR.ROUTE]",
+        "反和谐路由（平台相关）",
+        "Uncensor route (platform-bound)",
+    ),
+    (
+        "[TASK.UNCENSOR.SERVERS.",
+        "反和谐清单服务器",
+        "Uncensor manifest server",
+    ),
+    (
+        "[TASK.UNCENSOR.FILENAME]",
+        "反和谐文件名（平台相关）",
+        "Uncensor file names (platform-bound)",
+    ),
+    (
+        "[TASK.UNCENSOR.FILEPATH]",
+        "反和谐输出目录",
+        "Uncensor output paths",
+    ),
+];
 
-pub fn apply(content: &str) -> String {
-    let mut out: Vec<String> = Vec::new();
+const BAR_WIDTH: usize = 64;
 
-    out.push(comment_block(HEADER_TITLE, HEADER_NOTES));
+pub fn apply(content: &str, lang: CommentLang) -> String {
+    let mut out = Vec::new();
+
+    let header: Vec<&str> = HEADER.iter().map(|(zh, en)| pick(lang, zh, en)).collect();
+    out.push(wrap(&header));
     out.push(String::new());
 
-    let mut inserted: HashSet<&str> = HashSet::new();
+    let mut inserted = HashSet::new();
 
     for line in content.lines() {
-        if let Some(note) = key_comment(line) {
-            out.push(note.to_string());
-        }
-
         if let Some(key) = section_key(line)
-            && let Some((_, title, notes)) = SECTION_COMMENTS.iter().find(|(k, _, _)| *k == key)
-            && inserted.insert(key)
+            && let Some((zh, en)) = section_comment(&key)
+            && inserted.insert(key.clone())
         {
-            out.push(String::new());
-            out.push(comment_block(title, notes));
+            let text = pick(lang, zh, en);
+            let tagged = match task_prefix(&key) {
+                Some(prefix) => format!("{prefix}  {text}"),
+                None => text.to_string(),
+            };
+
+            out.push(wrap(&[&tagged]));
         }
 
         out.push(line.to_string());
     }
 
-    let mut result: String = out.join("\n");
+    let mut result = out.join("\n");
     result.push('\n');
 
     result
 }
 
-fn section_key(line: &str) -> Option<&str> {
+fn wrap(lines: &[&str]) -> String {
+    let bar = "=".repeat(BAR_WIDTH);
+    let mut block = format!("# {bar}\n");
+
+    for line in lines {
+        block.push_str(&format!("# {line}\n"));
+    }
+
+    block.push_str(&format!("# {bar}"));
+
+    block
+}
+
+fn pick<'a>(lang: CommentLang, zh: &'a str, en: &'a str) -> &'a str {
+    match lang {
+        CommentLang::Cn => zh,
+        CommentLang::En => en,
+    }
+}
+
+fn section_key(line: &str) -> Option<String> {
     if !line.starts_with('[') {
         return None;
     }
@@ -124,84 +190,119 @@ fn section_key(line: &str) -> Option<&str> {
     let end = line.find(']')?;
     let raw = &line[..=end];
 
-    if raw.starts_with("[LAUNCHER.SERVERS.") {
-        return Some("[LAUNCHER.SERVERS.");
+    for prefix in [
+        "[TASK.CLIENT.SERVERS.",
+        "[TASK.LAUNCHER.SERVERS.",
+        "[TASK.UNCENSOR.SERVERS.",
+    ] {
+        if raw.starts_with(prefix) {
+            return Some(prefix.to_string());
+        }
     }
 
-    if raw.starts_with("[SERVERS.") {
-        return Some("[SERVERS.");
-    }
-
-    if raw.contains('.') {
-        return None;
-    }
-
-    Some(raw)
+    Some(raw.to_string())
 }
 
-fn key_comment(line: &str) -> Option<&'static str> {
-    KEY_COMMENTS
+fn task_prefix(key: &str) -> Option<&'static str> {
+    if key.starts_with("[TASK.CLIENT") {
+        Some("TASK.CLIENT:")
+    } else if key.starts_with("[TASK.LAUNCHER") {
+        Some("TASK.LAUNCHER:")
+    } else if key.starts_with("[TASK.UNCENSOR") {
+        Some("TASK.UNCENSOR:")
+    } else {
+        None
+    }
+}
+
+fn section_comment(key: &str) -> Option<(&'static str, &'static str)> {
+    if let Some((_, zh, en)) = SECTIONS.iter().find(|(k, _, _)| *k == key) {
+        return Some((zh, en));
+    }
+
+    SECTIONS
         .iter()
-        .find(|(prefix, _)| line.starts_with(*prefix))
-        .map(|(_, note)| *note)
-}
-
-fn comment_block(title: &str, notes: &[&str]) -> String {
-    let bar: String = "=".repeat(60);
-    let mut block = format!("# {bar}\n# {title}\n");
-
-    for note in notes {
-        block.push_str(&format!("# {note}\n"));
-    }
-    block.push_str(&format!("# {bar}"));
-
-    block
+        .find(|(k, _, _)| key.starts_with(*k))
+        .map(|(_, zh, en)| (*zh, *en))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::apply;
+    use super::{CommentLang, apply};
 
     #[test]
-    fn injects_header_and_section_comments() {
-        let out = apply("[FILE_PATH]\nMANIFEST_OUTPUT_DIR = \"./out\"\n");
+    fn comments_only_section_headers() {
+        let input = "[GLOBAL]\nDEFAULT_REGION = \"CN\"\nDEFAULT_PLATFORM = \"win\"\n";
+        let out = apply(input, CommentLang::En);
 
-        assert!(out.starts_with("# ===="));
-        assert!(out.contains("# 应用程序配置文件"));
-        assert!(out.contains("# 文件路径配置"));
-        assert!(out.find("# 文件路径配置").unwrap() < out.find("[FILE_PATH]").unwrap());
+        let commented: Vec<&str> = out
+            .lines()
+            .filter(|line| line.starts_with('#') && !line.starts_with("# ="))
+            .collect();
+        assert_eq!(
+            commented,
+            [
+                "# Application config file",
+                "# Restart to apply changes",
+                "# -s/--set SECTION.KEY=VALUE overrides at runtime",
+                "# Global settings"
+            ]
+        );
+        assert_eq!(out.matches("# ==").count(), 4);
+        assert!(!out.contains("# Default region"));
+        assert!(!out.contains("# Default platform"));
     }
 
     #[test]
-    fn comments_repeated_sub_tables_only_once() {
-        let input = "[SERVERS.CN]\nURL = \"a\"\n\n[SERVERS.EN]\nURL = \"b\"\n";
-        let out = apply(input);
+    fn switches_language_by_lang() {
+        let input = "[GLOBAL]\nDEFAULT_REGION = \"CN\"\n";
 
-        assert_eq!(out.matches("# 服务器配置").count(), 1);
-        assert!(out.contains("[SERVERS.CN]"));
-        assert!(out.contains("[SERVERS.EN]"));
+        let cn = apply(input, CommentLang::Cn);
+        assert!(cn.contains("# 全局配置"));
+        assert!(!cn.contains("# Global settings"));
+
+        let en = apply(input, CommentLang::En);
+        assert!(en.contains("# Global settings"));
+        assert!(!en.contains("# 全局配置"));
     }
 
     #[test]
-    fn leaves_other_sub_tables_alone() {
-        let out = apply("[REQUEST]\nTIMEOUT_SECS = 1\n\n[REQUEST.EXTRA_HEADERS]\nA = \"b\"\n");
+    fn tags_task_sections_with_domain_prefix() {
+        let input = "[TASK.CLIENT.FLAGS.OP]\nMERGE_PATCH = true\n";
+        let out = apply(input, CommentLang::En);
 
-        assert_eq!(out.matches("# HTTP 请求配置").count(), 1);
-        assert_eq!(out.matches("# ====").count(), 4);
+        assert!(out.contains("# TASK.CLIENT:  Client run flags"));
+
+        let global = apply("[NETWORK]\nVERIFY_TLS = false\n", CommentLang::En);
+        assert!(global.contains("# HTTP client"));
+        assert!(!global.contains("TASK"));
     }
 
     #[test]
-    fn annotates_top_level_keys() {
-        let out = apply("DEFAULT_REGION = \"CN\"\n");
+    fn repeated_server_tables_commented_once() {
+        let input =
+            "[TASK.CLIENT.SERVERS.CN]\nurl = \"a\"\n\n[TASK.CLIENT.SERVERS.EN]\nurl = \"b\"\n";
+        let out = apply(input, CommentLang::En);
 
-        assert!(out.contains("# 默认区域"));
-        assert!(out.find("# 默认区域").unwrap() < out.find("DEFAULT_REGION").unwrap());
+        assert_eq!(out.matches("Per-region servers").count(), 1);
+        assert!(out.contains("[TASK.CLIENT.SERVERS.CN]"));
+        assert!(out.contains("[TASK.CLIENT.SERVERS.EN]"));
+    }
+
+    #[test]
+    fn comment_precedes_its_section() {
+        let input = "[NETWORK]\nVERIFY_TLS = false\n";
+        let out = apply(input, CommentLang::Cn);
+
+        let comment = out.find("# 网络客户端").unwrap();
+        let section = out.find("[NETWORK]").unwrap();
+        assert!(comment < section);
     }
 
     #[test]
     fn preserves_original_content() {
-        let input = "[FILE_NAME]\nVERSION_FILE = \"version.json\"\n";
-        let out = apply(input);
+        let input = "[FILE_EXTENSION]\nMANI = \".mani\"\n";
+        let out = apply(input, CommentLang::En);
 
         for line in input.lines() {
             assert!(out.contains(line), "lost original line: {line}");

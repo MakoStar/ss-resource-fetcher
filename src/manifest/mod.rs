@@ -1,7 +1,7 @@
 mod decoder;
 mod decryptor;
-mod mani_reader;
+mod reader;
 
 pub use decoder::ManifestDecoder;
 pub use decryptor::ManifestDecryptor;
-pub use mani_reader::{ManiReader, ManiResource};
+pub use reader::{ManiReader, ManiResource};

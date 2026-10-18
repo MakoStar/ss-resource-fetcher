@@ -25,22 +25,29 @@ impl UncensorTarget {
         app: &AppConfig,
         source: &UncensorSource,
         requester: &HttpFetcher,
+        save_manifest: bool,
     ) -> Result<Self> {
         match source {
             UncensorSource::DefaultUrl => Ok(Self::DefaultUrl(Box::new(DefaultUrlTarget::new(
                 app, requester,
             )))),
             UncensorSource::Region(region) => Ok(Self::Region(Box::new(RegionTarget::new(
-                app, region, requester,
+                app,
+                region,
+                requester,
+                save_manifest,
             )?))),
             UncensorSource::ConfigRegion => {
-                let region = Region::new(&app.uncensor.source_region);
+                let region = Region::new(&app.task.uncensor.source_region);
                 Ok(Self::Region(Box::new(RegionTarget::new(
-                    app, &region, requester,
+                    app,
+                    &region,
+                    requester,
+                    save_manifest,
                 )?)))
             }
             UncensorSource::CustomFiles { path, region } => Ok(Self::CustomFiles(Box::new(
-                CustomFilesTarget::new(app, path, region.as_ref(), requester)?,
+                CustomFilesTarget::new(app, path, region.as_ref(), requester, save_manifest)?,
             ))),
         }
     }
@@ -50,6 +57,14 @@ impl UncensorTarget {
             Self::Region(target) => target.output_dir(),
             Self::DefaultUrl(target) => target.output_dir(),
             Self::CustomFiles(target) => target.output_dir(),
+        }
+    }
+
+    pub fn region(&self) -> Option<&Region> {
+        match self {
+            Self::Region(target) => Some(target.region()),
+            Self::CustomFiles(target) => Some(target.region()),
+            Self::DefaultUrl(_) => None,
         }
     }
 

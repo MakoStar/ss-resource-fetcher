@@ -1,6 +1,7 @@
 # ss-resource-fetcher
 
 [![CI](https://github.com/MakoStar/ss-resource-fetcher/actions/workflows/ci.yml/badge.svg)](https://github.com/MakoStar/ss-resource-fetcher/actions/workflows/ci.yml)
+
 [English](README.en.md) | 简体中文
 
 《StellaSora》多区域资源抓取工具。流水线：拉取清单 → AES-128-CBC 解密 → protobuf 解码 → 提取补丁清单 → 下载资源 → bsdiff 合并，覆盖 CN / EN / JP / KR / TW 五个区域。

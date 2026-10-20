@@ -6,6 +6,8 @@ use std::rc::Rc;
 
 use anyhow::Context;
 use file_utils::FileHandler;
+use indexmap::IndexMap;
+use network_manager::HttpFetcher;
 use qbsdiff::Bspatch;
 
 use crate::config::{AppConfig, ClientRegistryConfig};
@@ -46,6 +48,18 @@ pub struct PatchMerger {
     plans_cache: RefCell<HashMap<Region, Rc<RegionPlans>>>,
     /// 本运行各资源已应用到的补丁步
     progress: RefCell<HashMap<(Region, String), usize>>,
+    /// 解码后的完整清单文件名 用来查补丁条目的版本与附加路径
+    decoded_manifest_filename: String,
+    /// 各区域服务器地址
+    servers: IndexMap<Region, String>,
+    /// 资源接口路径
+    resource_route: String,
+    /// 请求客户端
+    requester: HttpFetcher,
+    /// 解码清单缓存
+    decoded_cache: RefCell<HashMap<Region, Rc<ResourceEntries>>>,
+    /// 按版本取回的远程清单缓存
+    remote_cache: RefCell<HashMap<(Region, u64, String), Rc<ManiReader>>>,
 }
 
 struct RegionPlans {
@@ -94,6 +108,12 @@ impl PatchMerger {
             mani_cache: RefCell::new(HashMap::new()),
             plans_cache: RefCell::new(HashMap::new()),
             progress: RefCell::new(HashMap::new()),
+            decoded_manifest_filename: app.task.client.filename.decoded_manifest.clone(),
+            servers: app.server_urls(),
+            resource_route: app.task.client.route.resource.clone(),
+            requester: HttpFetcher::new(&app.build_fetcher_config()),
+            decoded_cache: RefCell::new(HashMap::new()),
+            remote_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -223,9 +243,13 @@ impl PatchMerger {
         for job in jobs {
             match job {
                 Job::Copy(file) => {
-                    logger::step!("[{region}] copy: {file}");
-                    self.copy_original_file(region, file)?;
-                    stats.copied += 1;
+                    if self.copy_original_file(region, file)? {
+                        logger::step!("[{region}] copy: {file}");
+                        stats.copied += 1;
+                    } else {
+                        logger::step!("[{region}] cached: {file}");
+                        stats.cached += 1;
+                    }
                 }
                 Job::Steps {
                     file,
@@ -329,7 +353,8 @@ impl PatchMerger {
             return false;
         }
 
-        let Ok(expected) = self.expected_resource_hash(region, file_name, &plan[first - 1]) else {
+        let Ok(Some(expected)) = self.expected_resource_hash(region, file_name, &plan[first - 1])
+        else {
             return false;
         };
 
@@ -426,7 +451,9 @@ impl PatchMerger {
         FileHandler::copy_file(&patch_path, output_path)?;
 
         log::debug!("[{region}] {file_name} replaced by {patch_name} (new file)");
-        if !Self::verify_hash(region, output_path, &expected_hash, Some(patch_name)) {
+        if let Some(expected) = &expected_hash
+            && !Self::verify_hash(region, output_path, expected, Some(patch_name))
+        {
             return Err(AppError::message(format!(
                 "Hash mismatch after replace: {patch_name}"
             )));
@@ -458,24 +485,29 @@ impl PatchMerger {
         std::fs::write(output_path, &merged)
             .with_context(|| format!("Failed to write merged result: {}", output_path.display()))?;
 
-        log::debug!("[{region}] {file_name} merged hex={expected_hash}");
-        if !Self::verify_hash(region, output_path, &expected_hash, Some(patch_name)) {
-            return Err(AppError::message(format!(
-                "Hash mismatch after merge: {patch_name}"
-            )));
+        if let Some(expected) = &expected_hash {
+            log::debug!("[{region}] {file_name} merged hex={expected}");
+            if !Self::verify_hash(region, output_path, expected, Some(patch_name)) {
+                return Err(AppError::message(format!(
+                    "Hash mismatch after merge: {patch_name}"
+                )));
+            }
+        } else {
+            log::warn!("[{region}] merged {patch_name} without hash verification");
         }
 
         Ok(())
     }
 
-    fn copy_original_file(&self, region: &Region, file_name: &str) -> Result<()> {
+    /// 返回是否真的写了文件 false 表示本地产物已是期望状态 直接跳过
+    fn copy_original_file(&self, region: &Region, file_name: &str) -> Result<bool> {
         let output_path = self.unpacked_path(region, file_name);
         let expected_hash = self.expected_original_hash(region, file_name)?;
 
         if output_path.is_file() {
             log::debug!("[{region}] {file_name} already exists, verifying expected hash");
             if Self::verify_hash(region, &output_path, &expected_hash, Some(file_name)) {
-                return Ok(());
+                return Ok(false);
             }
             log::debug!("[{region}] {file_name} hash mismatch, overwriting with the source file");
         }
@@ -495,7 +527,7 @@ impl PatchMerger {
             )));
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn verify_cached_output(
@@ -505,7 +537,10 @@ impl PatchMerger {
         patch_name: &str,
         output_path: &Path,
     ) -> Result<bool> {
-        let expected_hash = self.expected_resource_hash(region, file_name, patch_name)?;
+        let Some(expected_hash) = self.expected_resource_hash(region, file_name, patch_name)?
+        else {
+            return Ok(false);
+        };
 
         if !output_path.is_file() {
             log::debug!("[{region}] {file_name} output not found, will generate");
@@ -529,13 +564,147 @@ impl PatchMerger {
         region: &Region,
         file_name: &str,
         patch_name: &str,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         let mani_path = self.update_mani_path(region, file_name, patch_name);
 
-        match self.read_resource_hash(region, &mani_path, file_name) {
-            Ok(hash) => Ok(hash),
-            Err(err) => self.fallback_hash(region, file_name, err),
+        if let Ok(hash) = self.read_resource_hash(region, &mani_path, file_name) {
+            return Ok(Some(hash));
         }
+
+        // 本地清单补丁里没有这个资源 通常是它属于旧客户端版本
+        // 用补丁条目自身的版本与附加路径取回对应版本的清单再查
+        match self.expected_hash_for_patch(region, file_name, patch_name) {
+            Ok(Some(hash)) => {
+                log::debug!("[{region}] {file_name} hash from version manifest");
+                Ok(Some(hash))
+            }
+            Ok(None) => {
+                log::warn!("[{region}] {file_name} absent from {}", mani_path.display());
+                log::warn!("[{region}] skip hash verification ");
+                Ok(None)
+            }
+            Err(err) => {
+                log::warn!(
+                    "[{region}] {file_name} absent from {} and version lookup failed: {err}",
+                    mani_path.display()
+                );
+                log::warn!("[{region}] skip hash verification ");
+                Ok(None)
+            }
+        }
+    }
+
+    /// 取回补丁所属波次的清单补丁 再从中查期望 hash
+    fn expected_hash_for_patch(
+        &self,
+        region: &Region,
+        file_name: &str,
+        patch_name: &str,
+    ) -> Result<Option<String>> {
+        let entries = self.load_decoded_manifest(region)?;
+        let Some(entry) = entries.get(patch_name) else {
+            return Ok(None);
+        };
+
+        if entry.additional_path.is_empty() {
+            return Ok(None);
+        }
+
+        let mani_name = format!(
+            "{}.{}",
+            self.mani_prefix(file_name, patch_name),
+            self.root_mani_filename
+        );
+        let reader = self.remote_mani(region, entry.version, &entry.additional_path, &mani_name)?;
+
+        Ok(reader
+            .get_resource_hash_by_patch(file_name)
+            .map(|hash| hash.to_string()))
+    }
+
+    fn load_decoded_manifest(&self, region: &Region) -> Result<Rc<ResourceEntries>> {
+        if let Some(cached) = self.decoded_cache.borrow().get(region) {
+            return Ok(Rc::clone(cached));
+        }
+
+        let path = self
+            .manifest_output_dir
+            .join(region.as_str())
+            .join(&self.decoded_manifest_filename);
+        let entries = FileHandler::read_json::<ResourceEntries>(&path)
+            .with_context(|| format!("Failed to read decoded manifest: {}", path.display()))?;
+        let entries = Rc::new(entries);
+
+        self.decoded_cache
+            .borrow_mut()
+            .insert(region.clone(), Rc::clone(&entries));
+
+        Ok(entries)
+    }
+
+    /// 下载 {server}/{route}/{version}/{additional_path}/{root_mani} 并缓存
+    fn remote_mani(
+        &self,
+        region: &Region,
+        version: u64,
+        additional_path: &str,
+        mani_name: &str,
+    ) -> Result<Rc<ManiReader>> {
+        let key = (
+            region.clone(),
+            version,
+            format!("{additional_path}/{mani_name}"),
+        );
+        if let Some(cached) = self.remote_cache.borrow().get(&key) {
+            return Ok(Rc::clone(cached));
+        }
+
+        let path = self
+            .patch_source_dir
+            .join(region.as_str())
+            .join(&self.platform)
+            .join(version.to_string())
+            .join(additional_path)
+            .join(mani_name);
+
+        if !path.is_file() {
+            let url = self.remote_mani_url(region, version, additional_path, mani_name)?;
+            let bytes = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(self.requester.get_bytes(&url))
+            })
+            .with_context(|| format!("Failed to fetch manifest: {url}"))?;
+
+            FileHandler::write_bytes(&bytes, &path)?;
+        }
+
+        let reader = Rc::new(ManiReader::new(&path, Some(region))?);
+        self.remote_cache
+            .borrow_mut()
+            .insert(key, Rc::clone(&reader));
+
+        Ok(reader)
+    }
+
+    fn remote_mani_url(
+        &self,
+        region: &Region,
+        version: u64,
+        additional_path: &str,
+        mani_name: &str,
+    ) -> Result<String> {
+        let server = self
+            .servers
+            .get(region)
+            .ok_or_else(|| AppError::MissingServer(region.to_string()))?;
+
+        Ok([
+            server.trim_end_matches('/'),
+            self.resource_route.trim_matches('/'),
+            &version.to_string(),
+            additional_path.trim_matches('/'),
+            mani_name.trim_start_matches('/'),
+        ]
+        .join("/"))
     }
 
     fn expected_original_hash(&self, region: &Region, file_name: &str) -> Result<String> {

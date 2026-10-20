@@ -156,3 +156,50 @@ fn older_delta_after_newer_is_dropped() {
         vec!["p_1_u.lua.arcx", "p_2_u.lua.arcx", "p_4_u.lua.arcx"]
     );
 }
+
+/// 首个补丁与本体同版本时不能丢 否则后面的补丁丢失基准
+///
+/// 用 <= 判过时会丢掉 p_1_u，p_2_u 拿本体当基准直接报
+/// `bsdiff apply failed: ... failed to fill whole buffer`
+#[test]
+fn first_patch_matching_base_version_is_kept() {
+    let kept = order(
+        Some(143),
+        &[
+            ("p_1_u.win.unity3d", 143),
+            ("p_2_u.win.unity3d", 145),
+            ("p_3_u.win.unity3d", 132),
+        ],
+    );
+
+    assert_eq!(kept, vec!["p_1_u.win.unity3d", "p_2_u.win.unity3d"]);
+}
+
+/// 同版本首个补丁被丢时 后续补丁可能跑完 bsdiff 但结果不对 表现为 hash mismatch
+#[test]
+fn first_patch_matching_base_version_merges_in_order() {
+    let kept = order(
+        Some(143),
+        &[
+            ("p_1_u.ui_soldier.jp.unity3d", 143),
+            ("p_2_u.ui_soldier.jp.unity3d", 145),
+            ("p_5_u.ui_soldier.jp.unity3d", 134),
+            ("p_8_u.ui_soldier.jp.unity3d", 137),
+        ],
+    );
+
+    assert_eq!(
+        kept,
+        vec!["p_1_u.ui_soldier.jp.unity3d", "p_2_u.ui_soldier.jp.unity3d"]
+    );
+}
+
+#[test]
+fn first_patch_older_than_base_is_still_dropped() {
+    let kept = order(
+        Some(143),
+        &[("p_1_u.win.unity3d", 132), ("p_2_u.win.unity3d", 145)],
+    );
+
+    assert_eq!(kept, vec!["p_2_u.win.unity3d"]);
+}

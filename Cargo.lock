@@ -2303,7 +2303,7 @@ dependencies = [
 
 [[package]]
 name = "ss-resource-fetcher"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "aes",
  "anyhow",

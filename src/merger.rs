@@ -424,12 +424,10 @@ impl PatchMerger {
         let manifest = self.load_patch_manifest(region)?;
         let suffix = format!(".{file_name}");
 
-        let declared = self.declared_tier(region)?;
         let patches: Vec<_> = manifest
             .iter()
             .filter(|(key, _)| key.as_str() != file_name && key.ends_with(&suffix))
             .map(|(key, entry)| PatchRef::new(&self.registry, key, entry.version))
-            .filter(|patch| declared == 0 || patch.sequence <= declared)
             .collect();
 
         let base_version = manifest.get(file_name).map(|entry| entry.version);
@@ -438,18 +436,6 @@ impl PatchMerger {
         });
 
         Ok(plan.into_iter().map(str::to_string).collect())
-    }
-
-    /// 根清单声明的有效波次数 序号超过它的补丁属于上一轮版本线
-    fn declared_tier(&self, region: &Region) -> Result<u64> {
-        let path = self.root_mani_path(region);
-        if !path.is_file() {
-            return Ok(0);
-        }
-
-        let mani = self.load_mani(region, &path)?;
-
-        Ok(mani.bin_diff_patch_version().unwrap_or(0))
     }
 
     fn replace_with_new_file(
@@ -587,7 +573,7 @@ impl PatchMerger {
 
         // 本地清单补丁里没有这个资源 通常是它属于旧客户端版本
         // 用补丁条目自身的版本与附加路径取回对应版本的清单再查
-        match self.expected_hash_for_version(region, file_name, patch_name) {
+        match self.expected_hash_for_patch(region, file_name, patch_name) {
             Ok(Some(hash)) => {
                 log::debug!("[{region}] {file_name} hash from version manifest");
                 Ok(Some(hash))
@@ -608,8 +594,8 @@ impl PatchMerger {
         }
     }
 
-    /// 取回补丁条目对应版本的清单 再从中查目标资源的 hash
-    fn expected_hash_for_version(
+    /// 取回补丁所属波次的清单补丁 再从中查期望 hash
+    fn expected_hash_for_patch(
         &self,
         region: &Region,
         file_name: &str,
@@ -624,7 +610,12 @@ impl PatchMerger {
             return Ok(None);
         }
 
-        let reader = self.remote_mani(region, entry.version, &entry.additional_path)?;
+        let mani_name = format!(
+            "{}.{}",
+            self.mani_prefix(file_name, patch_name),
+            self.root_mani_filename
+        );
+        let reader = self.remote_mani(region, entry.version, &entry.additional_path, &mani_name)?;
 
         Ok(reader
             .get_resource_hash_by_patch(file_name)
@@ -657,8 +648,13 @@ impl PatchMerger {
         region: &Region,
         version: u64,
         additional_path: &str,
+        mani_name: &str,
     ) -> Result<Rc<ManiReader>> {
-        let key = (region.clone(), version, additional_path.to_string());
+        let key = (
+            region.clone(),
+            version,
+            format!("{additional_path}/{mani_name}"),
+        );
         if let Some(cached) = self.remote_cache.borrow().get(&key) {
             return Ok(Rc::clone(cached));
         }
@@ -669,10 +665,10 @@ impl PatchMerger {
             .join(&self.platform)
             .join(version.to_string())
             .join(additional_path)
-            .join(&self.root_mani_filename);
+            .join(mani_name);
 
         if !path.is_file() {
-            let url = self.remote_mani_url(region, version, additional_path)?;
+            let url = self.remote_mani_url(region, version, additional_path, mani_name)?;
             let bytes = tokio::task::block_in_place(|| {
                 tokio::runtime::Handle::current().block_on(self.requester.get_bytes(&url))
             })
@@ -694,6 +690,7 @@ impl PatchMerger {
         region: &Region,
         version: u64,
         additional_path: &str,
+        mani_name: &str,
     ) -> Result<String> {
         let server = self
             .servers
@@ -705,7 +702,7 @@ impl PatchMerger {
             self.resource_route.trim_matches('/'),
             &version.to_string(),
             additional_path.trim_matches('/'),
-            self.root_mani_filename.trim_start_matches('/'),
+            mani_name.trim_start_matches('/'),
         ]
         .join("/"))
     }

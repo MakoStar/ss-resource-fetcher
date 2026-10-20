@@ -43,16 +43,9 @@ pub fn apply_order<'a>(
 
     let mut kept: Vec<&'a str> = Vec::new();
     let mut current = base_version;
-    let mut applied = false;
 
     for patch in ordered {
-        let outdated = match current {
-            Some(version) if !applied => patch.version <= version,
-            Some(version) => patch.version < version,
-            None => false,
-        };
-
-        if outdated {
+        if current.is_some_and(|version| patch.version < version) {
             continue;
         }
 
@@ -62,7 +55,6 @@ pub fn apply_order<'a>(
 
         kept.push(patch.name);
         current = Some(patch.version);
-        applied = true;
     }
 
     kept

@@ -3,7 +3,7 @@ members = ["crates/*"]
 
 [package]
 name = "ss-resource-fetcher"
-version = "0.4.2"
+version = "0.4.3-alpha.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Multi-region resource fetcher for StellaSora: fetch, decrypt, decode and merge hotfix patches."

@@ -1,6 +1,9 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
+use anyhow::Context;
 use file_utils::FileHandler;
 use indexmap::{IndexMap, IndexSet};
 use network_manager::HttpFetcher;
@@ -46,6 +49,18 @@ pub struct RegionTarget {
     patch_store: RegionFileStore,
     /// 当前平台 落盘按平台分目录
     platform: String,
+    /// 请求客户端 用于按版本取回清单补丁
+    requester: HttpFetcher,
+    /// 资源服务器地址
+    server_url: String,
+    /// 资源接口路径
+    resource_route: String,
+    /// 清单补丁标签后缀
+    m_suffix: String,
+    /// 根清单文件名 用于拼补丁所属波次的清单名
+    root_mani: String,
+    /// 按版本取回的清单缓存
+    remote_cache: RefCell<HashMap<String, Rc<ManiReader>>>,
 }
 
 struct UncensorJob {
@@ -127,6 +142,12 @@ impl RegionTarget {
             )
             .with_platform(&platform),
             platform,
+            requester: requester.clone(),
+            server_url: server.url.clone(),
+            resource_route: app.task.client.route.resource.clone(),
+            m_suffix: app.updatetag.m_suffix.clone(),
+            root_mani: app.task.client.filename.root_mani.clone(),
+            remote_cache: RefCell::new(HashMap::new()),
         })
     }
 
@@ -200,7 +221,7 @@ impl RegionTarget {
         }
 
         let mani = self.latest_mani(&diffs).await?;
-        let expected = self.expected_hashes(&diffs, &plans, hashes, &mani)?;
+        let expected = self.expected_hashes(&diffs, &plans, hashes, &mani).await?;
 
         logger::head!("Fetch resources {}", self.region);
         let fetch_stats = self.fetch_all(&diffs, &plans).await?;
@@ -247,6 +268,28 @@ impl RegionTarget {
         let mut stats = FetchStats::default();
 
         for (tier, group) in &tiers {
+            let pending: Vec<_> = group
+                .iter()
+                .filter(|(name, entry)| !self.patch_cached(name, entry))
+                .collect();
+
+            log::debug!(
+                "[{}] fetch tier {} - {} file(s), {} pending",
+                self.region,
+                tier,
+                group.len(),
+                pending.len()
+            );
+
+            for (name, entry) in pending {
+                log::debug!(
+                    "[{}] fetch {name} v={} ap={}",
+                    self.region,
+                    entry.version,
+                    entry.additional_path
+                );
+            }
+
             let fetched = self
                 .patch_fetcher
                 .fetch_group(&self.region, Some(*tier), group)
@@ -255,6 +298,16 @@ impl RegionTarget {
         }
 
         Ok(stats)
+    }
+
+    fn patch_cached(&self, name: &str, entry: &ResourceEntry) -> bool {
+        if self.overwrite {
+            return false;
+        }
+
+        let path = self.patch_path(name);
+
+        path.is_file() && FileHandler::verify_md5(&path, &entry.hash).is_ok()
     }
 
     fn merge_all(
@@ -270,8 +323,16 @@ impl RegionTarget {
 
             for plan in group {
                 let output = self.output_path(&plan.file);
+                let expected_hash = expected.get(&plan.file);
 
-                if !self.overwrite && self.is_cached(&output, expected.get(&plan.file)) {
+                if let Some(hash) = expected_hash {
+                    log::debug!("[{}] {} expected hex: {}", self.region, plan.file, hash);
+                } else {
+                    log::debug!("[{}] {} no expected hash", self.region, plan.file);
+                }
+
+                if !self.overwrite && self.is_cached(&output, expected_hash) {
+                    log::debug!("[{}] {} verifying cached output", self.region, plan.file);
                     logger::step!("[{}] cached: {}", self.region, plan.file);
                     stats.cached += 1;
                     continue;
@@ -334,12 +395,18 @@ impl RegionTarget {
             .map(|name| (name.as_str(), self.patch_path(name)))
             .collect();
         let output = self.output_path(&plan.file);
-        logger::test!("{}", output.display());
+        log::debug!(
+            "[{}] {} merge plan: base={:?} steps={:?}",
+            self.region,
+            plan.file,
+            plan.base,
+            plan.steps
+        );
         self.merger
             .merge(&self.region, &plan.file, base.as_deref(), &steps, &output)
     }
 
-    fn expected_hashes(
+    async fn expected_hashes(
         &self,
         diffs: &[FileDiff],
         plans: &[UncensorPlan],
@@ -371,7 +438,18 @@ impl RegionTarget {
         };
 
         for plan in plans {
-            let Some(hash) = mani.get_resource_hash_by_patch(&plan.file) else {
+            let tier_hash = self
+                .expected_hash_for_patch(&plan.file, plan.steps.last(), diffs)
+                .await?;
+
+            let hash = match tier_hash {
+                Some(hash) => Some(hash),
+                None => mani
+                    .get_resource_hash_by_patch(&plan.file)
+                    .map(str::to_string),
+            };
+
+            let Some(hash) = hash else {
                 log::debug!(
                     "[{}] {} missing from latest mani, keep fallback hash",
                     self.region,
@@ -381,7 +459,7 @@ impl RegionTarget {
             };
 
             if let Some(third) = expected.get(&plan.file) {
-                if !third.eq_ignore_ascii_case(hash) {
+                if !third.eq_ignore_ascii_case(&hash) {
                     log::debug!(
                         "[{}] {} uncensor hash differs from mani hash",
                         self.region,
@@ -394,6 +472,81 @@ impl RegionTarget {
         }
 
         Ok(expected)
+    }
+
+    /// 最新清单补丁里没有该资源时 用它所属补丁的版本与附加路径取回对应波次的清单
+    async fn expected_hash_for_patch(
+        &self,
+        file_name: &str,
+        step: Option<&String>,
+        diffs: &[FileDiff],
+    ) -> Result<Option<String>> {
+        let Some(step) = step else {
+            return Ok(None);
+        };
+        let Some(diff) = diffs.iter().find(|diff| &diff.file_name == step) else {
+            return Ok(None);
+        };
+
+        if diff.additional_path.is_empty() {
+            return Ok(None);
+        }
+
+        let suffix = format!(".{file_name}");
+        let patch = step.strip_suffix(&suffix).unwrap_or(step);
+        let Some(prefix) = patch.rsplit_once('_').map(|(prefix, _)| prefix) else {
+            return Ok(None);
+        };
+        let mani_name = format!("{prefix}{}.{}", self.m_suffix, self.root_mani);
+        let reader = self
+            .remote_mani(diff.version as u64, &diff.additional_path, &mani_name)
+            .await?;
+
+        Ok(reader
+            .get_resource_hash_by_patch(file_name)
+            .map(|hash| hash.to_string()))
+    }
+
+    async fn remote_mani(
+        &self,
+        version: u64,
+        additional_path: &str,
+        mani_name: &str,
+    ) -> Result<Rc<ManiReader>> {
+        let key = format!("{version}/{additional_path}/{mani_name}");
+        if let Some(cached) = self.remote_cache.borrow().get(&key) {
+            return Ok(Rc::clone(cached));
+        }
+
+        let path = push_platform(self.metadata_dir.join(self.region.as_str()), &self.platform)
+            .join(version.to_string())
+            .join(additional_path)
+            .join(mani_name);
+
+        if !path.is_file() {
+            let url = [
+                self.server_url.trim_end_matches('/'),
+                self.resource_route.trim_matches('/'),
+                &version.to_string(),
+                additional_path.trim_matches('/'),
+                mani_name.trim_start_matches('/'),
+            ]
+            .join("/");
+            let bytes = self
+                .requester
+                .get_bytes(&url)
+                .await
+                .with_context(|| format!("Failed to fetch manifest: {url}"))?;
+
+            FileHandler::write_bytes(&bytes, &path)?;
+        }
+
+        let reader = Rc::new(ManiReader::new(&path, Some(&self.region))?);
+        self.remote_cache
+            .borrow_mut()
+            .insert(key, Rc::clone(&reader));
+
+        Ok(reader)
     }
 
     fn pick_mani<'a>(

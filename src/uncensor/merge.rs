@@ -33,15 +33,22 @@ impl UncensorMerger {
             };
 
             FileHandler::copy_file(base, output)?;
+            let hex = Self::hex_of(output)?;
+            log::debug!("[{region}] {file} no merge required, hex={hex}");
             return Ok(());
         }
 
         let mut current = base.map(Path::to_path_buf);
 
         for (name, path) in steps {
+            let patch_hex = Self::hex_of(path)?;
+            log::debug!("[{region}] {name} hex={patch_hex}");
+
             if self.registry.is_new_file_patch(name) {
                 log::debug!("[{region}] {file} replaced by {name}");
                 FileHandler::copy_file(path, output)?;
+                let hex = Self::hex_of(output)?;
+                log::debug!("[{region}] {file} replaced hex={hex}");
                 current = Some(output.to_path_buf());
                 continue;
             }
@@ -54,14 +61,22 @@ impl UncensorMerger {
 
             let base_data = std::fs::read(source)?;
             let patch_data = std::fs::read(path)?;
+
             let merged = apply_bsdiff(&base_data, &patch_data, name)?;
 
             FileHandler::write_bytes(&merged, output)?;
-            log::debug!("[{region}] {file} merged {name}");
+            let hex = Self::hex_of(output)?;
+            log::debug!("[{region}] {file} merged {name}, hex={hex}");
             current = Some(output.to_path_buf());
         }
 
         Ok(())
+    }
+
+    fn hex_of(path: &Path) -> Result<String> {
+        FileHandler::compute_md5(path).ok_or_else(|| {
+            AppError::message(format!("Failed to compute MD5 for: {}", path.display()))
+        })
     }
 }
 

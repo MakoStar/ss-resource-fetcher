@@ -1,38 +1,37 @@
-# ─── Build ─────────────────────────────────────────────────────
+# build output
 /target
 
-# Cargo.lock is committed on purpose: this is a binary, so a
-# reproducible dependency tree matters more than downstream flexibility.
+# Cargo.lock is tracked for reproducible builds
 
-# ─── Runtime output, regenerated on every run ──────────────────
+# runtime output
 /output
 /out
 keys.txt
 
-# ─── Generated app config file ─────────────────────────────────
+# generated config
 /ss-resource-fetcher.toml
 
-# ─── Local scratch material, never part of the repo ────────────
+# local scratch
 /scratch
 /ss_tmp
 
-# ─── Editors ───────────────────────────────────────────────────
+# editors
 /.vscode
 /.idea
 *.swp
 *~
 
-# ─── OS ────────────────────────────────────────────────────────
+# os
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# ─── Logs & temporaries ────────────────────────────────────────
+# logs and temp
 *.log
 *.tmp
 *.bak
 
-# ─── Release staging, written by .github/workflows/release.yml ─
+# release staging
 /dist
 
-# tests/fixtures holds real server data and must stay tracked.
+# tests fixtures stay tracked
